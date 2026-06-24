@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faultstorm"
+version = "0.1.0"
+description = "Fault-injection testing framework for distributed databases"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "psycopg2-binary",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["faultstorm*"]
