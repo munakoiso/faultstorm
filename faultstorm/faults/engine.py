@@ -209,7 +209,7 @@ class FaultEngine:
                     continue
 
                 # Split: first word is action name, rest is params
-                parts = line.split(None, 1)
+                parts = line.split(maxsplit=1)
                 action_name = parts[0]
                 params = parts[1] if len(parts) > 1 else ""
 

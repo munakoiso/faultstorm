@@ -77,21 +77,20 @@ def check_consistency(operations_log: str) -> CheckResult:
         op_type = op.get("type", "")
         action = op.get("action", "")
         value = op.get("value")
+        if value is None:
+            continue
 
         if action == "add":
             if op_type == INVOKE:
-                if value is not None:
-                    attempted.add(value)
+                attempted.add(value)
             elif op_type == OK:
-                if value is not None:
-                    successful.add(value)
+                successful.add(value)
             elif op_type == FAIL:
-                if value is not None:
-                    failed.add(value)
+                failed.add(value)
             # INFO: indeterminate — already in attempted, not in successful/failed
 
         elif action == "read":
-            if op_type == OK and value is not None:
+            if op_type == OK:
                 if isinstance(value, list):
                     final_read = set(value)
                     read_count += 1
@@ -111,10 +110,9 @@ def check_consistency(operations_log: str) -> CheckResult:
     successful_adds = len(successful)
     failed_adds = len(failed)
 
+    write_availability = 0.0
     if total_attempts > 0:
-        write_availability = successful_adds / total_attempts
-    else:
-        write_availability = 0.0
+        write_availability = successful_adds / total_attempts        
 
     valid = len(lost) == 0 and len(unexpected) == 0
 

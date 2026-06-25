@@ -102,7 +102,7 @@ class FaultRegistry:
         action = cls.deserialize("postgres pg1", db_nodes, extra_nodes)
 
         # Get subset of classes (for random mode)
-        classes = registry.get_classes(["kill", "switchover"])
+        classes = registry.get_classes(["kill", "partition_random_node"])
     """
 
     def __init__(self) -> None:
@@ -119,6 +119,8 @@ class FaultRegistry:
         """
         if not action_cls.name:
             raise ValueError(f"{action_cls.__name__} must have a non-empty 'name'")
+        if action_cls.name in self._registry:
+            raise ValueError(f"name {action_cls.name} already registered")
         self._registry[action_cls.name] = action_cls
         return self
 
@@ -262,48 +264,6 @@ class KillProcessAction(FaultAction):
         return cls(db_nodes, extra_nodes, process=parts[0], node=parts[1])
 
 
-class SwitchoverAction(FaultAction):
-    """Execute switchover on a random DB node.
-
-    Serialized format: ``<node>``
-    """
-
-    name = "switchover"
-
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 node: Optional[str] = None,
-                 command: Optional[List[str]] = None):
-        """Initialize.
-
-        Args:
-            db_nodes: Database node names
-            extra_nodes: Extra infrastructure node names
-            node: Specific node (None = pick random on execute)
-            command: Custom switchover command.
-                     Defaults to ["timeout", "10", "pgconsul-util", "switchover", "-y"].
-        """
-        super().__init__(db_nodes, extra_nodes)
-        self.node = node
-        self.command = command or ["timeout", "10", "pgconsul-util", "switchover", "-y"]
-
-    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
-        if self.node is None:
-            self.node = random.choice(self.db_nodes)
-        logger.info("Switchover on %s", self.node)
-        try:
-            ClusterManager.exec_on_node(self.node, self.command, timeout=15)
-        except Exception as e:
-            logger.warning("Switchover on %s failed: %s", self.node, e)
-
-    def serialize(self) -> str:
-        return self.node or ""
-
-    @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'SwitchoverAction':
-        return cls(db_nodes, extra_nodes, node=params.strip())
-
-
 class PartitionRandomHalvesAction(FaultAction):
     """Split all nodes into two random halves.
 
@@ -414,7 +374,6 @@ def create_default_registry() -> FaultRegistry:
     registry.register(WaitAction)
     registry.register(HealAllAction)
     registry.register(KillProcessAction)
-    registry.register(SwitchoverAction)
     registry.register(PartitionRandomHalvesAction)
     registry.register(PartitionMajoritiesRingAction)
     registry.register(PartitionRandomNodeAction)
