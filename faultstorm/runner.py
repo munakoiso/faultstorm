@@ -15,7 +15,6 @@ from faultstorm.db_client import DatabaseClient
 from faultstorm.load_generator import LoadGenerator
 from faultstorm.faults.engine import FaultEngine
 from faultstorm.faults.actions import FaultRegistry
-from faultstorm.faults.partitioners import Partitioners
 from faultstorm.checker import check_consistency
 from faultstorm.model import CheckResult
 
@@ -53,9 +52,6 @@ class TestRunner:
             log_dir = os.path.dirname(log_path)
             if log_dir:
                 os.makedirs(log_dir, exist_ok=True)
-
-        # Reset partitioners state
-        Partitioners.reset()
 
         logger.info("Starting test: %s", self.config.name)
         logger.info("Write phase: %d seconds", self.config.write_phase_duration)

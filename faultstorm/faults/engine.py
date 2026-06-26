@@ -2,24 +2,30 @@
 Fault engine for FaultStorm tests.
 
 Two modes:
-  - Random: picks random actions from a configured subset, applies a strategy
-    (currently: 2 random faults → wait → heal_all → wait → repeat),
-    and writes every action to a scenario log file.
+  - Random: picks random actions from a configured subset, executes them,
+    waits, then heals all active faults, waits again, and repeats.
+    Every action is written to a scenario log file.
   - Replay: reads a previously written scenario log, deserializes each line
     back into an action, and executes them in order.
+
+The engine maintains a sequential ordinal counter shared across all faults.
+Network partition actions use this ordinal as the iptables chain ID.
 
 Scenario log format (line-based)::
 
     # FaultStorm scenario log
     # Generated at 2026-06-23T14:00:00.000
-    # Replay with: python main.py --replay-scenario <this_file>
 
-    [2026-06-23T14:00:10.123] kill postgres postgresql1
-    [2026-06-23T14:00:10.456] partition_random_node zookeeper2
-    [2026-06-23T14:00:10.789] wait 60
-    [2026-06-23T14:00:70.012] heal_all
-    [2026-06-23T14:01:10.345] wait 60
+    [2026-06-23T14:00:10.123] kill 1 postgres postgresql1
+    [2026-06-23T14:00:10.456] +partition_random_node 2 zookeeper2
+    [2026-06-23T14:00:10.789] wait 3 60
+    [2026-06-23T14:00:70.012] -partition_random_node 2 zookeeper2
+    [2026-06-23T14:01:10.345] wait 4 60
     ...
+
+Lines prefixed with ``+`` indicate enabling a healable fault.
+Lines prefixed with ``-`` indicate healing/disabling a fault.
+Lines without a prefix are fire-and-forget actions.
 """
 
 import logging
@@ -34,9 +40,7 @@ from faultstorm.faults.actions import (
     FaultAction,
     FaultRegistry,
     WaitAction,
-    HealAllAction,
 )
-from faultstorm.faults.partitioners import Partitioners
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +56,9 @@ def _timestamp() -> str:
 class FaultEngine:
     """Engine for injecting failures into the cluster.
 
-    Supports two modes:
-      - run_random(): random faults with a configurable strategy
+    Maintains a list of active (healable) faults and a sequential ordinal
+    counter. Supports two modes:
+      - run_random(): random faults with heal cycles
       - run_replay(): deterministic replay from a scenario log
     """
 
@@ -68,6 +73,13 @@ class FaultEngine:
         self.registry = registry
         self._stop_event = threading.Event()
         self._log_file: Optional[IO] = None
+        self._active_faults: List[FaultAction] = []
+        self._next_ordinal = 0
+
+    def _get_next_ordinal(self) -> int:
+        """Get next sequential ordinal number."""
+        self._next_ordinal += 1
+        return self._next_ordinal
 
     # ---- Scenario log I/O ----
 
@@ -87,21 +99,32 @@ class FaultEngine:
             self._log_file.close()
             self._log_file = None
 
-    def _write_action(self, action: FaultAction) -> None:
+    def _write_action(self, action: FaultAction, healing: bool = False) -> None:
         """Write a single action to the scenario log.
 
-        Format: [timestamp] action_name serialized_params
+        Format for healable actions:
+            [timestamp] +action_name params   (enable)
+            [timestamp] -action_name params   (heal)
+
+        Format for fire-and-forget actions:
+            [timestamp] action_name params
 
         Args:
             action: Executed action to record
+            healing: True if this is a heal event for a healable action
         """
         if self._log_file is None:
             return
         params = action.serialize()
-        if params:
-            line = f"[{_timestamp()}] {action.name} {params}\n"
+        if action.healable:
+            prefix = "-" if healing else "+"
         else:
-            line = f"[{_timestamp()}] {action.name}\n"
+            prefix = ""
+        name = f"{prefix}{action.name}"
+        if params:
+            line = f"[{_timestamp()}] {name} {params}\n"
+        else:
+            line = f"[{_timestamp()}] {name}\n"
         self._log_file.write(line)
         self._log_file.flush()
 
@@ -111,8 +134,8 @@ class FaultEngine:
         """Run random fault cycles for the specified duration.
 
         Strategy: pick 2 random fault actions → execute them → wait
-        (fault_active_duration) → heal_all → wait (fault_pause_duration)
-        → repeat.
+        (fault_active_duration) → heal all active faults → wait
+        (fault_pause_duration) → repeat.
 
         Args:
             duration: Total duration in seconds
@@ -137,21 +160,25 @@ class FaultEngine:
             # 2 random faults
             for _ in range(2):
                 cls = random.choice(fault_classes)
-                action = cls(db, extra)
+                ordinal = self._get_next_ordinal()
+                action = cls(db, extra, ordinal)
                 self._execute_and_log(action)
+                if action.healable:
+                    self._active_faults.append(action)
 
             # Wait (active phase)
-            wait_active = WaitAction(db, extra, self.config.fault_active_duration)
+            wait_active = WaitAction(db, extra, self._get_next_ordinal(),
+                                     self.config.fault_active_duration)
             self._execute_and_log(wait_active)
             if self._stop_event.is_set():
                 break
 
-            # Heal all
-            heal = HealAllAction(db, extra)
-            self._execute_and_log(heal)
+            # Heal all active faults
+            self._heal_all_active()
 
             # Wait (pause phase)
-            wait_pause = WaitAction(db, extra, self.config.fault_pause_duration)
+            wait_pause = WaitAction(db, extra, self._get_next_ordinal(),
+                                    self.config.fault_pause_duration)
             self._execute_and_log(wait_pause)
 
     def _execute_and_log(self, action: FaultAction) -> None:
@@ -160,7 +187,18 @@ class FaultEngine:
             action.execute(self._stop_event)
         except Exception as e:
             logger.error("Action %s failed: %s", action.name, e)
-        self._write_action(action)
+        self._write_action(action, healing=False)
+
+    def _heal_all_active(self) -> None:
+        """Heal all currently active faults and log each heal event."""
+        for action in self._active_faults:
+            try:
+                action.heal()
+            except Exception as e:
+                logger.error("Heal %s ordinal=%d failed: %s",
+                             action.name, action.ordinal, e)
+            self._write_action(action, healing=True)
+        self._active_faults.clear()
 
     # ---- Replay mode ----
 
@@ -176,26 +214,34 @@ class FaultEngine:
 
         self._open_log(scenario_path)
         try:
-            for action in commands:
+            for action, is_heal in commands:
                 if self._stop_event.is_set():
                     logger.info("Replay interrupted")
                     break
-                self._execute_and_log(action)
+                if is_heal:
+                    try:
+                        action.heal()
+                    except Exception as e:
+                        logger.error("Heal %s ordinal=%d failed: %s",
+                                     action.name, action.ordinal, e)
+                    self._write_action(action, healing=True)
+                else:
+                    self._execute_and_log(action)
         finally:
             self._close_log()
 
-    def _parse_log(self, path: str) -> List[FaultAction]:
-        """Parse a scenario log file into a list of actions.
+    def _parse_log(self, path: str) -> List[tuple]:
+        """Parse a scenario log file into a list of (action, is_heal) tuples.
 
         Args:
             path: Path to the scenario log
 
         Returns:
-            List of deserialized FaultAction instances
+            List of (FaultAction, bool) tuples. is_heal=True means heal event.
         """
         db = self.config.db_nodes
         extra = self.config.extra_nodes
-        actions: List[FaultAction] = []
+        results: List[tuple] = []
 
         with open(path, 'r') as f:
             for line_no, raw_line in enumerate(f, 1):
@@ -207,6 +253,12 @@ class FaultEngine:
                 line = _TIMESTAMP_RE.sub('', line)
                 if not line or line.startswith('#'):
                     continue
+
+                # Check for +/- prefix (healable actions)
+                is_heal = False
+                if line.startswith('+') or line.startswith('-'):
+                    is_heal = line.startswith('-')
+                    line = line[1:]
 
                 # Split: first word is action name, rest is params
                 parts = line.split(maxsplit=1)
@@ -221,10 +273,10 @@ class FaultEngine:
                     )
 
                 action = cls.deserialize(params, db, extra)
-                actions.append(action)
+                results.append((action, is_heal))
 
-        logger.info("Parsed scenario %s: %d actions", path, len(actions))
-        return actions
+        logger.info("Parsed scenario %s: %d entries", path, len(results))
+        return results
 
     # ---- Control ----
 
@@ -233,5 +285,5 @@ class FaultEngine:
         self._stop_event.set()
 
     def heal_all(self) -> None:
-        """Heal all remaining network partitions (cleanup)."""
-        Partitioners.heal_all(self.config.all_nodes)
+        """Heal all remaining active faults (cleanup)."""
+        self._heal_all_active()
