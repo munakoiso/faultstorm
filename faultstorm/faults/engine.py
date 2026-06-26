@@ -33,7 +33,7 @@ import random
 import re
 import threading
 from datetime import datetime
-from typing import List, Optional, IO
+from typing import Dict, List, Optional, IO
 
 from faultstorm.config import TestConfig
 from faultstorm.faults.actions import (
@@ -62,15 +62,19 @@ class FaultEngine:
       - run_replay(): deterministic replay from a scenario log
     """
 
-    def __init__(self, config: TestConfig, registry: FaultRegistry):
+    def __init__(self, config: TestConfig, registry: FaultRegistry,
+                 dc_map: Optional[Dict[str, List[str]]] = None):
         """Initialize fault engine.
 
         Args:
             config: Test configuration
             registry: Registry with all known action classes
+            dc_map: Datacenter mapping (DC name → list of node names).
+                    Passed to fault actions; not serialized.
         """
         self.config = config
         self.registry = registry
+        self.dc_map = dc_map or {}
         self._stop_event = threading.Event()
         self._log_file: Optional[IO] = None
         self._active_faults: List[FaultAction] = []
@@ -155,20 +159,24 @@ class FaultEngine:
         """Main random-mode loop."""
         db = self.config.db_nodes
         extra = self.config.extra_nodes
+        load_node = self.config.load_node
+        dc_map = self.dc_map
 
         while not self._stop_event.is_set():
             # 2 random faults
             for _ in range(2):
                 cls = random.choice(fault_classes)
                 ordinal = self._get_next_ordinal()
-                action = cls(db, extra, ordinal)
+                action = cls(db, extra, ordinal, load_node=load_node,
+                             dc_map=dc_map)
                 self._execute_and_log(action)
                 if action.healable:
                     self._active_faults.append(action)
 
             # Wait (active phase)
             wait_active = WaitAction(db, extra, self._get_next_ordinal(),
-                                     self.config.fault_active_duration)
+                                     load_node=load_node, dc_map=dc_map,
+                                     seconds=self.config.fault_active_duration)
             self._execute_and_log(wait_active)
             if self._stop_event.is_set():
                 break
@@ -178,7 +186,8 @@ class FaultEngine:
 
             # Wait (pause phase)
             wait_pause = WaitAction(db, extra, self._get_next_ordinal(),
-                                    self.config.fault_pause_duration)
+                                    load_node=load_node, dc_map=dc_map,
+                                    seconds=self.config.fault_pause_duration)
             self._execute_and_log(wait_pause)
 
     def _execute_and_log(self, action: FaultAction) -> None:
@@ -241,6 +250,8 @@ class FaultEngine:
         """
         db = self.config.db_nodes
         extra = self.config.extra_nodes
+        load_node = self.config.load_node
+        dc_map = self.dc_map
         results: List[tuple] = []
 
         with open(path, 'r') as f:
@@ -272,7 +283,8 @@ class FaultEngine:
                         f"Available: {', '.join(self.registry.list_names())}"
                     )
 
-                action = cls.deserialize(params, db, extra)
+                action = cls.deserialize(params, db, extra, load_node=load_node,
+                                         dc_map=dc_map)
                 results.append((action, is_heal))
 
         logger.info("Parsed scenario %s: %d entries", path, len(results))

@@ -15,7 +15,7 @@ The engine writes lines in the format:
     [<timestamp>] <action_name> <ordinal> <params>    (fire-and-forget action)
 
 and during replay, looks up the class by action_name and calls
-Class.deserialize(params_string, db_nodes, extra_nodes).
+Class.deserialize(params_string, db_nodes, extra_nodes, load_node, dc_map).
 """
 
 import logging
@@ -23,7 +23,7 @@ import random
 import time
 import threading
 from abc import ABC, abstractmethod
-from typing import List, Optional, Type
+from typing import Dict, List, Optional, Type
 
 from faultstorm.cluster import ClusterManager
 from faultstorm.faults import partitioners
@@ -34,9 +34,17 @@ logger = logging.getLogger(__name__)
 class FaultAction(ABC):
     """Abstract base class for fault actions.
 
-    Every action receives db_nodes, extra_nodes, and an ordinal at
-    construction time. The ordinal is a sequential number assigned by
-    the engine and used by network partitions as the iptables chain ID.
+    Every action receives db_nodes, extra_nodes, load_node, dc_map, and an
+    ordinal at construction time. The ordinal is a sequential number assigned
+    by the engine and used by network partitions as the iptables chain ID.
+
+    ``load_node`` is the node running the load generator (write/read traffic).
+    It is passed to all actions but currently only used by
+    PartitionRandomSubnetAction. It is NOT serialized.
+
+    ``dc_map`` maps datacenter names to lists of node names. It is passed to
+    all actions but currently only used by PartitionRandomDcAction. It is NOT
+    serialized.
 
     Subclasses must define a unique ``name`` class attribute.
     Healable actions (like network partitions) set ``healable = True``
@@ -47,10 +55,14 @@ class FaultAction(ABC):
     healable: bool = False
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0):
+                 ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None):
         self.db_nodes = db_nodes
         self.extra_nodes = extra_nodes
         self.ordinal = ordinal
+        self.load_node = load_node
+        self.dc_map = dc_map or {}
 
     @property
     def all_nodes(self) -> List[str]:
@@ -85,7 +97,9 @@ class FaultAction(ABC):
     @classmethod
     @abstractmethod
     def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'FaultAction':
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'FaultAction':
         """Reconstruct an action from a serialized parameter string.
 
         Must parse ordinal from the first element.
@@ -95,6 +109,8 @@ class FaultAction(ABC):
                     starts with ordinal
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
+            load_node: Load generator node name (not serialized)
+            dc_map: DC-to-nodes mapping (not serialized)
 
         Returns:
             A fully configured FaultAction ready to execute()
@@ -196,8 +212,12 @@ class WaitAction(FaultAction):
     name = "wait"
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0, seconds: int = 0):
-        super().__init__(db_nodes, extra_nodes, ordinal)
+                 ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
+                 seconds: int = 0):
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
         self.seconds = seconds
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
@@ -211,11 +231,14 @@ class WaitAction(FaultAction):
 
     @classmethod
     def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'WaitAction':
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'WaitAction':
         parts = params.strip().split()
         ordinal = int(parts[0])
         seconds = int(parts[1])
-        return cls(db_nodes, extra_nodes, ordinal, seconds=seconds)
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, seconds=seconds)
 
 
 class KillProcessAction(FaultAction):
@@ -228,6 +251,8 @@ class KillProcessAction(FaultAction):
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
                  process: Optional[str] = None, node: Optional[str] = None,
                  processes: Optional[List[str]] = None):
         """Initialize.
@@ -236,12 +261,15 @@ class KillProcessAction(FaultAction):
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
             ordinal: Sequential fault number (ignored by kill)
+            load_node: Load generator node name (not used by kill)
+            dc_map: DC-to-nodes mapping (not used by kill)
             process: Specific process to kill (None = pick random on execute)
             node: Specific node to target (None = pick random on execute)
             processes: Pool of process names to choose from.
                        Defaults to ["postgres", "pgconsul"].
         """
-        super().__init__(db_nodes, extra_nodes, ordinal)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
         self.process = process
         self.node = node
         self.processes = processes or ["postgres", "pgconsul"]
@@ -264,10 +292,13 @@ class KillProcessAction(FaultAction):
 
     @classmethod
     def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'KillProcessAction':
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'KillProcessAction':
         parts = params.strip().split()
         ordinal = int(parts[0])
-        return cls(db_nodes, extra_nodes, ordinal, process=parts[1], node=parts[2])
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, process=parts[1], node=parts[2])
 
 
 class PartitionRandomHalvesAction(FaultAction):
@@ -281,9 +312,12 @@ class PartitionRandomHalvesAction(FaultAction):
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
                  group1: Optional[List[str]] = None,
                  group2: Optional[List[str]] = None):
-        super().__init__(db_nodes, extra_nodes, ordinal)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
         self.group1 = group1
         self.group2 = group2
 
@@ -301,12 +335,12 @@ class PartitionRandomHalvesAction(FaultAction):
         group2_ips = [ClusterManager.get_node_ip(n) for n in self.group2]
         for node in self.group1:
             partitioners.create_chain(node, chain_name)
-            partitioners.add_rule_to_chain(node, chain_name, group2_ips)
+            partitioners.add_drop_rules_by_src(node, chain_name, group2_ips)
 
         group1_ips = [ClusterManager.get_node_ip(n) for n in self.group1]
         for node in self.group2:
             partitioners.create_chain(node, chain_name)
-            partitioners.add_rule_to_chain(node, chain_name, group1_ips)
+            partitioners.add_drop_rules_by_src(node, chain_name, group1_ips)
 
     def heal(self) -> None:
         logger.info("Healing partition halves ordinal=%d", self.ordinal)
@@ -319,12 +353,15 @@ class PartitionRandomHalvesAction(FaultAction):
 
     @classmethod
     def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'PartitionRandomHalvesAction':
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomHalvesAction':
         parts = params.strip().split()
         ordinal = int(parts[0])
         group1 = parts[1].split(',')
         group2 = parts[2].split(',')
-        return cls(db_nodes, extra_nodes, ordinal, group1=group1, group2=group2)
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, group1=group1, group2=group2)
 
 
 class PartitionMajoritiesRingAction(FaultAction):
@@ -338,8 +375,11 @@ class PartitionMajoritiesRingAction(FaultAction):
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
                  ordered: Optional[List[str]] = None):
-        super().__init__(db_nodes, extra_nodes, ordinal)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
         self.ordered = ordered
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
@@ -357,7 +397,7 @@ class PartitionMajoritiesRingAction(FaultAction):
             blocked = [nd for nd in self.ordered if nd not in visible]
             blocked_ips = [ClusterManager.get_node_ip(nd) for nd in blocked]
             partitioners.create_chain(node, chain_name)
-            partitioners.add_rule_to_chain(node, chain_name, blocked_ips)
+            partitioners.add_drop_rules_by_src(node, chain_name, blocked_ips)
 
     def heal(self) -> None:
         logger.info("Healing partition ring ordinal=%d", self.ordinal)
@@ -368,11 +408,14 @@ class PartitionMajoritiesRingAction(FaultAction):
 
     @classmethod
     def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'PartitionMajoritiesRingAction':
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionMajoritiesRingAction':
         parts = params.strip().split()
         ordinal = int(parts[0])
         ordered = parts[1].split(',')
-        return cls(db_nodes, extra_nodes, ordinal, ordered=ordered)
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, ordered=ordered)
 
 
 class PartitionRandomNodeAction(FaultAction):
@@ -386,41 +429,305 @@ class PartitionRandomNodeAction(FaultAction):
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
                  isolated: Optional[str] = None):
-        super().__init__(db_nodes, extra_nodes, ordinal)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
         self.isolated = isolated
+
+    def _affected_nodes(self) -> List[str]:
+        """All nodes affected by the partition (including load_node)."""
+        nodes = list(self.all_nodes)
+        if self.load_node and self.load_node not in nodes:
+            nodes.append(self.load_node)
+        return nodes
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
         if self.isolated is None:
             self.isolated = random.choice(self.all_nodes)
         logger.info("Partition node: %s isolated", self.isolated)
 
-        others = [n for n in self.all_nodes if n != self.isolated]
+        affected = self._affected_nodes()
+        others = [n for n in affected if n != self.isolated]
         chain_name = partitioners.get_chain_name(self.ordinal)
 
         blocked_ips = [ClusterManager.get_node_ip(n) for n in others]
         partitioners.create_chain(self.isolated, chain_name)
-        partitioners.add_rule_to_chain(self.isolated, chain_name, blocked_ips)
+        partitioners.add_drop_rules_by_src(self.isolated, chain_name, blocked_ips)
 
         isolated_ip = ClusterManager.get_node_ip(self.isolated)
         for node in others:
             partitioners.create_chain(node, chain_name)
-            partitioners.add_rule_to_chain(node, chain_name, [isolated_ip])
+            partitioners.add_drop_rules_by_src(node, chain_name, [isolated_ip])
 
     def heal(self) -> None:
         logger.info("Healing partition node ordinal=%d", self.ordinal)
-        partitioners.heal_partition(self.ordinal, self.all_nodes)
+        partitioners.heal_partition(self.ordinal, self._affected_nodes())
 
     def serialize(self) -> str:
         return f"{self.ordinal} {self.isolated or ''}"
 
     @classmethod
     def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str]) -> 'PartitionRandomNodeAction':
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomNodeAction':
         parts = params.strip().split()
         ordinal = int(parts[0])
         isolated = parts[1] if len(parts) > 1 else None
-        return cls(db_nodes, extra_nodes, ordinal, isolated=isolated)
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, isolated=isolated)
+
+
+class PartitionRandomSubnetAction(FaultAction):
+    """Apply a random directional network filter on a random DB node.
+
+    Randomly chooses:
+      - A DB node to apply iptables rules on
+      - Traffic direction: ``input`` (incoming), ``output`` (outgoing),
+        or ``both``
+      - A subnet group to filter:
+          1 (``zk``)  — ZooKeeper (extra) nodes
+          2 (``db``)  — other DB nodes + load generator node
+          3 (``all``) — both groups combined
+
+    Only the chosen node gets iptables rules; other nodes are unaffected.
+    This simulates a partial, asymmetric network failure.
+
+    Serialized format:
+        ``<ordinal> <node> <direction> <subnet_type> <blocked_nodes_csv>``
+    """
+
+    name = "partition_random_subnet"
+    healable = True
+
+    # Direction constants
+    DIRECTION_INPUT = "input"
+    DIRECTION_OUTPUT = "output"
+    DIRECTION_BOTH = "both"
+    DIRECTIONS = [DIRECTION_INPUT, DIRECTION_OUTPUT, DIRECTION_BOTH]
+
+    # Subnet type constants
+    SUBNET_ZK = "zk"
+    SUBNET_DB = "db"
+    SUBNET_ALL = "all"
+    SUBNET_TYPES = [SUBNET_ZK, SUBNET_DB, SUBNET_ALL]
+
+    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
+                 ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
+                 node: Optional[str] = None,
+                 direction: Optional[str] = None,
+                 subnet_type: Optional[str] = None,
+                 blocked_nodes: Optional[List[str]] = None):
+        """Initialize.
+
+        Args:
+            db_nodes: Database node names
+            extra_nodes: Extra infrastructure node names (ZK nodes)
+            ordinal: Sequential fault number (used as iptables chain ID)
+            load_node: Load generator node name (included in ``db`` subnet)
+            dc_map: DC-to-nodes mapping (not used by this action)
+            node: DB node to apply rules on (None = pick random on execute)
+            direction: Traffic direction to filter (None = pick random)
+            subnet_type: Subnet group to block (None = pick random)
+            blocked_nodes: Explicit list of blocked node names.
+                           If None, computed from subnet_type on execute.
+        """
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
+        self.node = node
+        self.direction = direction
+        self.subnet_type = subnet_type
+        self.blocked_nodes = blocked_nodes
+
+    def _resolve_blocked_nodes(self) -> List[str]:
+        """Compute the list of blocked nodes based on subnet_type."""
+        zk_nodes = list(self.extra_nodes)
+        other_nodes = [n for n in self.db_nodes if n != self.node]
+        if self.load_node:
+            other_nodes.append(self.load_node)
+        if self.subnet_type == self.SUBNET_ZK:
+            return zk_nodes
+        elif self.subnet_type == self.SUBNET_DB:
+            return other_nodes
+        else:  # SUBNET_ALL
+            return zk_nodes + other_nodes
+
+    def _get_iptables_directions(self) -> List[str]:
+        """Map direction string to iptables chain directions."""
+        if self.direction == self.DIRECTION_INPUT:
+            return ["INPUT"]
+        elif self.direction == self.DIRECTION_OUTPUT:
+            return ["OUTPUT"]
+        else:  # DIRECTION_BOTH
+            return ["INPUT", "OUTPUT"]
+
+    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+        if self.node is None:
+            self.node = random.choice(self.db_nodes)
+        if self.direction is None:
+            self.direction = random.choice(self.DIRECTIONS)
+        if self.subnet_type is None:
+            self.subnet_type = random.choice(self.SUBNET_TYPES)
+        if self.blocked_nodes is None:
+            self.blocked_nodes = self._resolve_blocked_nodes()
+
+        blocked_ips = [ClusterManager.get_node_ip(n) for n in self.blocked_nodes]
+        ipt_directions = self._get_iptables_directions()
+
+        logger.info(
+            "Partition random subnet: node=%s direction=%s subnet=%s "
+            "blocked=%s",
+            self.node, self.direction, self.subnet_type, self.blocked_nodes,
+        )
+
+        for ipt_dir in ipt_directions:
+            chain_name = partitioners.get_directional_chain_name(
+                self.ordinal, ipt_dir
+            )
+            partitioners.create_chain_for_direction(
+                self.node, chain_name, ipt_dir
+            )
+            if ipt_dir == "INPUT":
+                partitioners.add_drop_rules_by_src(
+                    self.node, chain_name, blocked_ips
+                )
+            else:  # OUTPUT
+                partitioners.add_drop_rules_by_dest(
+                    self.node, chain_name, blocked_ips
+                )
+
+    def heal(self) -> None:
+        logger.info(
+            "Healing partition random subnet ordinal=%d node=%s",
+            self.ordinal, self.node,
+        )
+        ipt_directions = self._get_iptables_directions()
+        partitioners.heal_directional_partition(
+            self.ordinal, self.node, ipt_directions
+        )
+
+    def serialize(self) -> str:
+        blocked_csv = ','.join(self.blocked_nodes or [])
+        return (f"{self.ordinal} {self.node} {self.direction} "
+                f"{self.subnet_type} {blocked_csv}")
+
+    @classmethod
+    def deserialize(cls, params: str, db_nodes: List[str],
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomSubnetAction':
+        parts = params.strip().split()
+        ordinal = int(parts[0])
+        node = parts[1]
+        direction = parts[2]
+        subnet_type = parts[3]
+        blocked_nodes = parts[4].split(',') if len(parts) > 4 and parts[4] else []
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, node=node, direction=direction,
+                   subnet_type=subnet_type, blocked_nodes=blocked_nodes)
+
+
+class PartitionRandomDcAction(FaultAction):
+    """Isolate all nodes of a random datacenter from all other nodes.
+
+    Similar to PartitionRandomNodeAction, but instead of isolating a single
+    node, it isolates all nodes belonging to a randomly chosen DC.
+
+    Requires ``dc_map`` to be populated (mapping DC names → node lists).
+    The list of nodes for a DC is resolved from ``dc_map`` at execution time.
+
+    Serialized format: ``<ordinal> <dc_name>``
+    """
+
+    name = "partition_random_dc"
+    healable = True
+
+    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
+                 ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
+                 dc_name: Optional[str] = None):
+        """Initialize.
+
+        Args:
+            db_nodes: Database node names
+            extra_nodes: Extra infrastructure node names
+            ordinal: Sequential fault number (used as iptables chain ID)
+            load_node: Load generator node name (not used by this action)
+            dc_map: DC-to-nodes mapping (used to pick a random DC
+                    and resolve its nodes)
+            dc_name: Specific DC to isolate (None = pick random on execute)
+        """
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
+        self.dc_name = dc_name
+
+    def _get_dc_nodes(self) -> List[str]:
+        """Get list of nodes for the chosen DC from dc_map."""
+        return list(self.dc_map.get(self.dc_name, []))
+
+    def _affected_nodes(self) -> List[str]:
+        """All nodes affected by the partition (including load_node)."""
+        nodes = list(self.all_nodes)
+        if self.load_node and self.load_node not in nodes:
+            nodes.append(self.load_node)
+        return nodes
+
+    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+        if not self.dc_map:
+            logger.warning("partition_random_dc: dc_map is empty, skipping")
+            return
+
+        if self.dc_name is None:
+            self.dc_name = random.choice(list(self.dc_map.keys()))
+
+        dc_nodes = self._get_dc_nodes()
+        if not dc_nodes:
+            logger.warning("partition_random_dc: DC %s has no nodes, skipping",
+                           self.dc_name)
+            return
+
+        affected = self._affected_nodes()
+        others = [n for n in affected if n not in dc_nodes]
+        logger.info("Partition DC %s: isolated=%s others=%s",
+                    self.dc_name, dc_nodes, others)
+
+        chain_name = partitioners.get_chain_name(self.ordinal)
+
+        # Block traffic from others on each DC node
+        others_ips = [ClusterManager.get_node_ip(n) for n in others]
+        for node in dc_nodes:
+            partitioners.create_chain(node, chain_name)
+            partitioners.add_drop_rules_by_src(node, chain_name, others_ips)
+
+        # Block traffic from DC nodes on each other node
+        dc_ips = [ClusterManager.get_node_ip(n) for n in dc_nodes]
+        for node in others:
+            partitioners.create_chain(node, chain_name)
+            partitioners.add_drop_rules_by_src(node, chain_name, dc_ips)
+
+    def heal(self) -> None:
+        logger.info("Healing partition DC %s ordinal=%d",
+                    self.dc_name, self.ordinal)
+        partitioners.heal_partition(self.ordinal, self._affected_nodes())
+
+    def serialize(self) -> str:
+        return f"{self.ordinal} {self.dc_name}"
+
+    @classmethod
+    def deserialize(cls, params: str, db_nodes: List[str],
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomDcAction':
+        parts = params.strip().split()
+        ordinal = int(parts[0])
+        dc_name = parts[1] if len(parts) > 1 else None
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, dc_name=dc_name)
 
 
 # ---- Registry factory ----
@@ -438,4 +745,6 @@ def create_default_registry() -> FaultRegistry:
     registry.register(PartitionRandomHalvesAction)
     registry.register(PartitionMajoritiesRingAction)
     registry.register(PartitionRandomNodeAction)
+    registry.register(PartitionRandomSubnetAction)
+    registry.register(PartitionRandomDcAction)
     return registry

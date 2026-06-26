@@ -51,6 +51,8 @@ class TestConfig:
         "partition_random_halves",
         "partition_majorities_ring",
         "partition_random_node",
+        "partition_random_subnet",
+        "partition_random_dc",
         "kill",
     ])
 
@@ -60,6 +62,10 @@ class TestConfig:
 
     # Replay mode
     replay_scenario: Optional[str] = None
+
+    # Load generator node (the node running write/read traffic).
+    # Passed to fault actions but only used by PartitionRandomSubnetAction.
+    load_node: Optional[str] = None
 
     @property
     def all_nodes(self) -> List[str]:

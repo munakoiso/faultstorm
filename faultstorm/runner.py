@@ -9,6 +9,7 @@ import os
 import logging
 import threading
 from datetime import datetime
+from typing import Dict, List, Optional
 
 from faultstorm.config import TestConfig
 from faultstorm.db_client import DatabaseClient
@@ -29,17 +30,21 @@ class TestRunner:
     """
 
     def __init__(self, config: TestConfig, db_client: DatabaseClient,
-                 fault_registry: FaultRegistry):
+                 fault_registry: FaultRegistry,
+                 dc_map: Optional[Dict[str, List[str]]] = None):
         """Initialize test runner.
 
         Args:
             config: Test configuration
             db_client: Database client implementing DatabaseClient interface
             fault_registry: Registry of fault action classes
+            dc_map: Datacenter mapping (DC name → list of node names).
+                    Passed to fault engine; not serialized.
         """
         self.config = config
         self.db_client = db_client
         self.fault_registry = fault_registry
+        self.dc_map = dc_map or {}
 
     def run(self) -> CheckResult:
         """Run a complete fault-injection test.
@@ -65,7 +70,8 @@ class TestRunner:
         with open(self.config.operations_log, 'w') as ops_log:
 
             load_gen = LoadGenerator(self.config, self.db_client)
-            engine = FaultEngine(self.config, self.fault_registry)
+            engine = FaultEngine(self.config, self.fault_registry,
+                                 dc_map=self.dc_map)
 
             # Setup
             logger.info("Setting up test table...")
