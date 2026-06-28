@@ -53,7 +53,7 @@ def check_consistency(operations_log: str) -> CheckResult:
     - Unexpected values: never attempted but found in final read (CORRUPTION)
     - Recovered values: indeterminate writes that actually went through
 
-    The semantics follow the Jepsen set checker:
+    The semantics follow the standard set checker:
     - lost = successful_adds - final_read
     - unexpected = final_read - attempted
     - recovered = (final_read ∩ attempted) - successful_adds

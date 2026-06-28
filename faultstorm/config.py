@@ -44,6 +44,14 @@ class TestConfig:
     add_interval: float = 0.02
     read_interval: float = 1.0
 
+    # Application-side timeout for each DB operation (seconds).
+    # If a single add/read does not complete within this time, the
+    # operation is treated as indeterminate.
+    operation_timeout: float = 5.0
+
+    # Number of parallel writer threads per DB node.
+    writers_per_node: int = 2
+
     # Fault configuration
     fault_active_duration: int = 60
     fault_pause_duration: int = 60
