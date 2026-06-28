@@ -184,7 +184,27 @@ class FaultEngine:
     def _random_loop(self, duration: int,
                      fault_classes: List[type],
                      complex_classes: List[type]) -> None:
-        """Main random-mode loop."""
+        """Main random-mode loop.
+
+        Runs fault injection cycles for at most ``duration`` seconds.
+        A background timer sets ``_stop_event`` when time is up, which
+        immediately interrupts any running ``WaitAction`` and causes
+        the loop to exit.  The timer is cancelled if the loop is
+        stopped earlier by an external ``stop()`` call.
+        """
+        timer = threading.Timer(duration, self._stop_event.set)
+        timer.daemon = True
+        timer.start()
+        logger.info("Fault engine timer started: %d seconds", duration)
+
+        try:
+            self._do_random_loop(fault_classes, complex_classes)
+        finally:
+            timer.cancel()
+
+    def _do_random_loop(self, fault_classes: List[type],
+                        complex_classes: List[type]) -> None:
+        """Inner random-mode loop (runs until ``_stop_event`` is set)."""
         db = self.config.db_nodes
         extra = self.config.extra_nodes
         load_node = self.config.load_node
