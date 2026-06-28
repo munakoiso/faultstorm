@@ -56,6 +56,13 @@ class TestConfig:
         "kill",
     ])
 
+    # Complex faults: combine 1-3 host-targetable faults on a single DB node.
+    # The list of eligible fault types is built dynamically from ``fault_types``
+    # by selecting those with ``host_targetable = True``.
+    complex_faults_enabled: bool = True
+    complex_fault_min_wait: int = 0
+    complex_fault_max_wait: int = 20
+
     # Logging
     operations_log: str = "logs/operations.log"
     scenario_log: str = "logs/scenario.log"

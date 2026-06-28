@@ -54,6 +54,10 @@ class FaultAction(ABC):
     name: str = ""
     healable: bool = False
 
+    #: Whether this action can target a specific host node via ``node=<name>``.
+    #: Used by the engine to build complex (multi-fault) host scenarios.
+    host_targetable: bool = False
+
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
                  load_node: Optional[str] = None,
@@ -248,6 +252,7 @@ class KillProcessAction(FaultAction):
     """
 
     name = "kill"
+    host_targetable = True
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
@@ -426,15 +431,16 @@ class PartitionRandomNodeAction(FaultAction):
 
     name = "partition_random_node"
     healable = True
+    host_targetable = True
 
     def __init__(self, db_nodes: List[str], extra_nodes: List[str],
                  ordinal: int = 0,
                  load_node: Optional[str] = None,
                  dc_map: Optional[Dict[str, List[str]]] = None,
-                 isolated: Optional[str] = None):
+                 node: Optional[str] = None):
         super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
                          dc_map=dc_map)
-        self.isolated = isolated
+        self.node = node
 
     def _affected_nodes(self) -> List[str]:
         """All nodes affected by the partition (including load_node)."""
@@ -444,29 +450,29 @@ class PartitionRandomNodeAction(FaultAction):
         return nodes
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
-        if self.isolated is None:
-            self.isolated = random.choice(self.all_nodes)
-        logger.info("Partition node: %s isolated", self.isolated)
+        if self.node is None:
+            self.node = random.choice(self.all_nodes)
+        logger.info("Partition node: %s isolated", self.node)
 
         affected = self._affected_nodes()
-        others = [n for n in affected if n != self.isolated]
+        others = [n for n in affected if n != self.node]
         chain_name = partitioners.get_chain_name(self.ordinal)
 
         blocked_ips = [ClusterManager.get_node_ip(n) for n in others]
-        partitioners.create_chain(self.isolated, chain_name)
-        partitioners.add_drop_rules_by_src(self.isolated, chain_name, blocked_ips)
+        partitioners.create_chain(self.node, chain_name)
+        partitioners.add_drop_rules_by_src(self.node, chain_name, blocked_ips)
 
-        isolated_ip = ClusterManager.get_node_ip(self.isolated)
-        for node in others:
-            partitioners.create_chain(node, chain_name)
-            partitioners.add_drop_rules_by_src(node, chain_name, [isolated_ip])
+        node_ip = ClusterManager.get_node_ip(self.node)
+        for other in others:
+            partitioners.create_chain(other, chain_name)
+            partitioners.add_drop_rules_by_src(other, chain_name, [node_ip])
 
     def heal(self) -> None:
         logger.info("Healing partition node ordinal=%d", self.ordinal)
         partitioners.heal_partition(self.ordinal, self._affected_nodes())
 
     def serialize(self) -> str:
-        return f"{self.ordinal} {self.isolated or ''}"
+        return f"{self.ordinal} {self.node or ''}"
 
     @classmethod
     def deserialize(cls, params: str, db_nodes: List[str],
@@ -475,9 +481,9 @@ class PartitionRandomNodeAction(FaultAction):
                     dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomNodeAction':
         parts = params.strip().split()
         ordinal = int(parts[0])
-        isolated = parts[1] if len(parts) > 1 else None
+        node = parts[1] if len(parts) > 1 else None
         return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, isolated=isolated)
+                   dc_map=dc_map, node=node)
 
 
 class PartitionRandomSubnetAction(FaultAction):
@@ -501,6 +507,7 @@ class PartitionRandomSubnetAction(FaultAction):
 
     name = "partition_random_subnet"
     healable = True
+    host_targetable = True
 
     # Direction constants
     DIRECTION_INPUT = "input"

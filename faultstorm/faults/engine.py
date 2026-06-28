@@ -138,9 +138,19 @@ class FaultEngine:
     def run_random(self, duration: int, scenario_path: str) -> None:
         """Run random fault cycles for the specified duration.
 
-        Strategy: pick 2 random fault actions → execute them → wait
-        (fault_active_duration) → heal all active faults → wait
-        (fault_pause_duration) → repeat.
+        Each cycle injects 2 faults via ``_inject_complex_fault``, waits
+        for ``fault_active_duration``, heals all active faults in random
+        order with random waits, then pauses for ``fault_pause_duration``.
+
+        When ``complex_faults_enabled`` is True and there are eligible
+        host-targetable fault types, each injection randomly chooses
+        between a single regular fault and a multi-fault combo (1–3
+        host-targetable faults on one DB node with random wait
+        intervals).
+
+        When ``complex_faults_enabled`` is False (or no host-targetable
+        types are available), each injection is always a single regular
+        fault.
 
         Args:
             duration: Total duration in seconds
@@ -149,35 +159,49 @@ class FaultEngine:
         self._stop_event.clear()
         fault_classes = self.registry.get_classes(self.config.fault_types)
 
+        # Build list of host-targetable classes for complex faults
+        complex_classes: List[type] = []
+        if self.config.complex_faults_enabled:
+            complex_classes = [c for c in fault_classes if c.host_targetable]
+            if complex_classes:
+                logger.info(
+                    "Complex faults enabled with %d eligible types: %s",
+                    len(complex_classes),
+                    [c.name for c in complex_classes],
+                )
+            else:
+                logger.info(
+                    "Complex faults enabled but no host-targetable types "
+                    "found in fault_types; using single-fault mode"
+                )
+
         self._open_log(scenario_path)
         try:
-            self._random_loop(duration, fault_classes)
+            self._random_loop(duration, fault_classes, complex_classes)
         finally:
             self._close_log()
 
     def _random_loop(self, duration: int,
-                     fault_classes: List[type]) -> None:
+                     fault_classes: List[type],
+                     complex_classes: List[type]) -> None:
         """Main random-mode loop."""
         db = self.config.db_nodes
         extra = self.config.extra_nodes
         load_node = self.config.load_node
         dc_map = self.dc_map
+        min_wait = self.config.complex_fault_min_wait
+        max_wait = self.config.complex_fault_max_wait
 
         while not self._stop_event.is_set():
-            # 2 random faults
+            # 2 complex fault injections per cycle
             for _ in range(2):
-                cls = random.choice(fault_classes)
-                ordinal = self._get_next_ordinal()
-                action = cls(db, extra, ordinal, load_node=load_node,
-                             dc_map=dc_map)
-                self._execute_and_log(action)
-                if action.healable:
-                    self._active_faults.append(action)
+                self._inject_complex_fault(db, extra, load_node, dc_map,
+                                           fault_classes, complex_classes)
+                wait_sec = random.randint(min_wait, max_wait)
                 wait_a_bit = WaitAction(db, extra, self._get_next_ordinal(),
-                                     load_node=load_node, dc_map=dc_map,
-                                     seconds=15)
+                                        load_node=load_node, dc_map=dc_map,
+                                        seconds=wait_sec)
                 self._execute_and_log(wait_a_bit)
-
 
             # Wait (active phase)
             wait_active = WaitAction(db, extra, self._get_next_ordinal(),
@@ -187,7 +211,7 @@ class FaultEngine:
             if self._stop_event.is_set():
                 break
 
-            # Heal all active faults
+            # Heal all active faults (random order, random waits)
             self._heal_all_active()
 
             # Wait (pause phase)
@@ -195,6 +219,67 @@ class FaultEngine:
                                     load_node=load_node, dc_map=dc_map,
                                     seconds=self.config.fault_pause_duration)
             self._execute_and_log(wait_pause)
+
+    def _inject_complex_fault(self, db: List[str], extra: List[str],
+                              load_node: Optional[str],
+                              dc_map: Dict[str, List[str]],
+                              fault_classes: List[type],
+                              complex_classes: List[type]) -> None:
+        """Inject a single fault or a multi-fault combo on one host.
+
+        If ``complex_classes`` is non-empty, randomly chooses between:
+          - A single fault from all enabled types (50% chance)
+          - A combo of 1–3 host-targetable faults on one random DB
+            node with random wait intervals between them (50% chance)
+
+        If ``complex_classes`` is empty, always injects a single fault
+        from all enabled types.
+
+        Args:
+            db: Database node names
+            extra: Extra infrastructure node names
+            load_node: Load generator node name
+            dc_map: DC-to-nodes mapping
+            fault_classes: All enabled fault action classes
+            complex_classes: Host-targetable subset (may be empty)
+        """
+        min_wait = self.config.complex_fault_min_wait
+        max_wait = self.config.complex_fault_max_wait
+
+        use_combo = complex_classes and random.random() < 0.5
+
+        if not use_combo:
+            # Single regular fault
+            cls = random.choice(fault_classes)
+            ordinal = self._get_next_ordinal()
+            action = cls(db, extra, ordinal, load_node=load_node,
+                         dc_map=dc_map)
+            self._execute_and_log(action)
+            if action.healable:
+                self._active_faults.append(action)
+        else:
+            # Multi-fault combo on one host
+            target_node = random.choice(db)
+            fault_count = random.randint(1, 3)
+            logger.info("Complex fault: %d faults on %s",
+                        fault_count, target_node)
+
+            for i in range(fault_count):
+                cls = random.choice(complex_classes)
+                ordinal = self._get_next_ordinal()
+                action = cls(db, extra, ordinal, load_node=load_node,
+                             dc_map=dc_map, node=target_node)
+                self._execute_and_log(action)
+                if action.healable:
+                    self._active_faults.append(action)
+
+                # Random wait between component faults (not after the last)
+                if i < fault_count - 1:
+                    wait_sec = random.randint(min_wait, max_wait)
+                    wait = WaitAction(db, extra, self._get_next_ordinal(),
+                                      load_node=load_node, dc_map=dc_map,
+                                      seconds=wait_sec)
+                    self._execute_and_log(wait)
 
     def _execute_and_log(self, action: FaultAction) -> None:
         """Execute an action and write it to the scenario log."""
@@ -205,14 +290,32 @@ class FaultEngine:
         self._write_action(action, healing=False)
 
     def _heal_all_active(self) -> None:
-        """Heal all currently active faults and log each heal event."""
-        for action in self._active_faults:
+        """Heal all currently active faults in random order with random waits."""
+        faults = list(self._active_faults)
+        random.shuffle(faults)
+
+        min_wait = self.config.complex_fault_min_wait
+        max_wait = self.config.complex_fault_max_wait
+
+        for i, action in enumerate(faults):
             try:
                 action.heal()
             except Exception as e:
                 logger.error("Heal %s ordinal=%d failed: %s",
                              action.name, action.ordinal, e)
             self._write_action(action, healing=True)
+
+            # Random wait between heals (not after the last)
+            if i < len(faults) - 1:
+                wait_sec = random.randint(min_wait, max_wait)
+                wait = WaitAction(
+                    self.config.db_nodes, self.config.extra_nodes,
+                    self._get_next_ordinal(),
+                    load_node=self.config.load_node, dc_map=self.dc_map,
+                    seconds=wait_sec,
+                )
+                self._execute_and_log(wait)
+
         self._active_faults.clear()
 
     # ---- Replay mode ----
