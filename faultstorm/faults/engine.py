@@ -32,6 +32,7 @@ import logging
 import random
 import re
 import threading
+import time
 from datetime import datetime
 from typing import Dict, List, Optional, IO
 
@@ -172,6 +173,11 @@ class FaultEngine:
                 self._execute_and_log(action)
                 if action.healable:
                     self._active_faults.append(action)
+                wait_a_bit = WaitAction(db, extra, self._get_next_ordinal(),
+                                     load_node=load_node, dc_map=dc_map,
+                                     seconds=15)
+                self._execute_and_log(wait_a_bit)
+
 
             # Wait (active phase)
             wait_active = WaitAction(db, extra, self._get_next_ordinal(),

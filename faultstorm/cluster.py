@@ -79,8 +79,8 @@ class ClusterManager:
             )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            logger.debug("exec_on_node %s failed (rc=%d): %s",
-                         node, e.returncode, e.stderr.strip())
+            logger.debug("exec_on_node %s failed (rc=%d): %s %s",
+                         node, e.returncode, e.stdout.strip(), e.stderr.strip())
             raise
         except subprocess.TimeoutExpired:
             logger.warning("exec_on_node %s timed out after %ds", node, timeout)
