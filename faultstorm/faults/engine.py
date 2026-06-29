@@ -352,6 +352,8 @@ class FaultEngine:
         for i, action in enumerate(faults):
             try:
                 action.heal()
+                if action.destructive:
+                    self._destructive_count -= 1
             except Exception as e:
                 logger.error("Heal %s ordinal=%d failed: %s",
                              action.name, action.ordinal, e)
