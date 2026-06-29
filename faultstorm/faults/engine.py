@@ -80,6 +80,7 @@ class FaultEngine:
         self._log_file: Optional[IO] = None
         self._active_faults: List[FaultAction] = []
         self._next_ordinal = 0
+        self._destructive_count = 0
 
     def _get_next_ordinal(self) -> int:
         """Get next sequential ordinal number."""
@@ -241,6 +242,18 @@ class FaultEngine:
                                     seconds=self.config.fault_pause_duration)
             self._log_and_execute(wait_pause)
 
+    def _filter_by_destructive_limit(self, classes: List[type]) -> List[type]:
+        """Filter out destructive classes if the limit has been reached.
+
+        When ``max_destructive_actions`` is set and the counter has
+        reached the limit, only non-destructive classes are returned.
+        Otherwise the original list is returned unchanged.
+        """
+        limit = self.config.max_destructive_actions
+        if limit is not None and self._destructive_count >= limit:
+            return [c for c in classes if not c.destructive]
+        return classes
+
     def _inject_complex_fault(self, db: List[str], extra: List[str],
                               load_node: Optional[str],
                               dc_map: Dict[str, List[str]],
@@ -256,6 +269,10 @@ class FaultEngine:
         If ``complex_classes`` is empty, always injects a single fault
         from all enabled types.
 
+        When the destructive-action limit is reached, destructive
+        classes are excluded from the candidate pool so the engine
+        picks only non-destructive faults.
+
         Args:
             db: Database node names
             extra: Extra infrastructure node names
@@ -269,41 +286,53 @@ class FaultEngine:
 
         use_combo = complex_classes and random.random() < 0.5
 
-        if not use_combo:
-            # Single regular fault
-            cls = random.choice(fault_classes)
+        if use_combo:
+            pool = complex_classes
+            fault_count = random.randint(1, 3)
+            target_node = random.choice(db)
+            logger.info("Complex fault: %d faults on %s",
+                        fault_count, target_node)
+        else:
+            pool = fault_classes
+            fault_count = 1
+            target_node = None
+
+        for i in range(fault_count):
+            available = self._filter_by_destructive_limit(pool)
+            if not available:
+                logger.info(
+                    "All remaining fault classes are destructive and the "
+                    "limit is reached; skipping injection"
+                )
+                break
+
+            cls = random.choice(available)
             ordinal = self._get_next_ordinal()
-            action = cls(db, extra, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+
+            if target_node is not None:
+                action = cls(db, extra, ordinal, load_node=load_node,
+                             dc_map=dc_map, node=target_node)
+            else:
+                action = cls(db, extra, ordinal, load_node=load_node,
+                             dc_map=dc_map)
+
+            if action.destructive:
+                self._destructive_count += 1
+
             self._log_and_execute(action)
             if action.healable:
                 self._active_faults.append(action)
-        else:
-            # Multi-fault combo on one host
-            target_node = random.choice(db)
-            fault_count = random.randint(1, 3)
-            logger.info("Complex fault: %d faults on %s",
-                        fault_count, target_node)
 
-            for i in range(fault_count):
-                cls = random.choice(complex_classes)
-                ordinal = self._get_next_ordinal()
-                action = cls(db, extra, ordinal, load_node=load_node,
-                             dc_map=dc_map, node=target_node)
-                self._log_and_execute(action)
-                if action.healable:
-                    self._active_faults.append(action)
-
-                # Random wait between component faults (not after the last)
-                if i < fault_count - 1:
-                    wait_sec = random.randint(min_wait, max_wait)
-                    wait = WaitAction(db, extra, self._get_next_ordinal(),
-                                      load_node=load_node, dc_map=dc_map,
-                                      seconds=wait_sec)
-                    self._log_and_execute(wait)
+            # Random wait between component faults (not after the last)
+            if i < fault_count - 1:
+                wait_sec = random.randint(min_wait, max_wait)
+                wait = WaitAction(db, extra, self._get_next_ordinal(),
+                                  load_node=load_node, dc_map=dc_map,
+                                  seconds=wait_sec)
+                self._log_and_execute(wait)
 
     def _log_and_execute(self, action: FaultAction) -> None:
-        """Write an action to the scenario log and execute it ."""
+        """Write an action to the scenario log and execute it."""
         self._write_action(action, healing=False)
         try:
             action.execute(self._stop_event)

@@ -54,6 +54,11 @@ class FaultAction(ABC):
     name: str = ""
     healable: bool = False
 
+    #: Whether this action is destructive (e.g. deletes data, requires lengthy
+    #: recovery).  The engine limits how many destructive actions may fire
+    #: during a single test run via ``TestConfig.max_destructive_actions``.
+    destructive: bool = False
+
     #: Whether this action can target a specific host node via ``node=<name>``.
     #: Used by the engine to build complex (multi-fault) host scenarios.
     host_targetable: bool = False

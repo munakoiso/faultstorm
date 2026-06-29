@@ -73,6 +73,12 @@ class TestConfig:
 
     parallel_faults_count: int = 2
 
+    # Maximum number of destructive actions allowed per test run.
+    # Actions with ``destructive = True`` are counted; once the limit
+    # is reached the engine skips further destructive actions.
+    # None means unlimited.
+    max_destructive_actions: Optional[int] = 1
+
     # Logging
     operations_log: str = "logs/operations.log"
     scenario_log: str = "logs/scenario.log"
