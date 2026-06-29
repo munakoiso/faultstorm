@@ -221,13 +221,13 @@ class FaultEngine:
                 wait_a_bit = WaitAction(db, extra, self._get_next_ordinal(),
                                         load_node=load_node, dc_map=dc_map,
                                         seconds=wait_sec)
-                self._execute_and_log(wait_a_bit)
+                self._log_and_execute(wait_a_bit)
 
             # Wait (active phase)
             wait_active = WaitAction(db, extra, self._get_next_ordinal(),
                                      load_node=load_node, dc_map=dc_map,
                                      seconds=self.config.fault_active_duration)
-            self._execute_and_log(wait_active)
+            self._log_and_execute(wait_active)
             if self._stop_event.is_set():
                 break
 
@@ -238,7 +238,7 @@ class FaultEngine:
             wait_pause = WaitAction(db, extra, self._get_next_ordinal(),
                                     load_node=load_node, dc_map=dc_map,
                                     seconds=self.config.fault_pause_duration)
-            self._execute_and_log(wait_pause)
+            self._log_and_execute(wait_pause)
 
     def _inject_complex_fault(self, db: List[str], extra: List[str],
                               load_node: Optional[str],
@@ -274,7 +274,7 @@ class FaultEngine:
             ordinal = self._get_next_ordinal()
             action = cls(db, extra, ordinal, load_node=load_node,
                          dc_map=dc_map)
-            self._execute_and_log(action)
+            self._log_and_execute(action)
             if action.healable:
                 self._active_faults.append(action)
         else:
@@ -289,7 +289,7 @@ class FaultEngine:
                 ordinal = self._get_next_ordinal()
                 action = cls(db, extra, ordinal, load_node=load_node,
                              dc_map=dc_map, node=target_node)
-                self._execute_and_log(action)
+                self._log_and_execute(action)
                 if action.healable:
                     self._active_faults.append(action)
 
@@ -299,15 +299,15 @@ class FaultEngine:
                     wait = WaitAction(db, extra, self._get_next_ordinal(),
                                       load_node=load_node, dc_map=dc_map,
                                       seconds=wait_sec)
-                    self._execute_and_log(wait)
+                    self._log_and_execute(wait)
 
-    def _execute_and_log(self, action: FaultAction) -> None:
-        """Execute an action and write it to the scenario log."""
+    def _log_and_execute(self, action: FaultAction) -> None:
+        """Write an action to the scenario log and execute it ."""
+        self._write_action(action, healing=False)
         try:
             action.execute(self._stop_event)
         except Exception as e:
             logger.error("Action %s failed: %s", action.name, e)
-        self._write_action(action, healing=False)
 
     def _heal_all_active(self) -> None:
         """Heal all currently active faults in random order with random waits."""
@@ -334,7 +334,7 @@ class FaultEngine:
                     load_node=self.config.load_node, dc_map=self.dc_map,
                     seconds=wait_sec,
                 )
-                self._execute_and_log(wait)
+                self._log_and_execute(wait)
 
         self._active_faults.clear()
 
@@ -364,7 +364,7 @@ class FaultEngine:
                                      action.name, action.ordinal, e)
                     self._write_action(action, healing=True)
                 else:
-                    self._execute_and_log(action)
+                    self._log_and_execute(action)
         finally:
             self._close_log()
 
