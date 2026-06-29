@@ -1,0 +1,66 @@
+version: "3.8"
+
+services:
+  node1:
+    build:
+      context: docker
+    container_name: faultstorm_node1
+    hostname: node1
+    cap_add:
+      - NET_ADMIN
+    networks:
+      faultstorm_test_net:
+
+  node2:
+    build:
+      context: docker
+    container_name: faultstorm_node2
+    hostname: node2
+    cap_add:
+      - NET_ADMIN
+    networks:
+      faultstorm_test_net:
+
+  node3:
+    build:
+      context: docker
+    container_name: faultstorm_node3
+    hostname: node3
+    cap_add:
+      - NET_ADMIN
+    networks:
+      faultstorm_test_net:
+
+  extra1:
+    build:
+      context: docker
+    container_name: faultstorm_extra1
+    hostname: extra1
+    cap_add:
+      - NET_ADMIN
+    networks:
+      faultstorm_test_net:
+
+  extra2:
+    build:
+      context: docker
+    container_name: faultstorm_extra2
+    hostname: extra2
+    cap_add:
+      - NET_ADMIN
+    networks:
+      faultstorm_test_net:
+
+  loadnode:
+    build:
+      context: docker
+    container_name: faultstorm_loadnode
+    hostname: loadnode
+    cap_add:
+      - NET_ADMIN
+    networks:
+      faultstorm_test_net:
+
+networks:
+  faultstorm_test_net:
+    driver: bridge

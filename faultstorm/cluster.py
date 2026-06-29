@@ -79,12 +79,72 @@ class ClusterManager:
             )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            logger.debug("exec_on_node %s failed (rc=%d): %s",
-                         node, e.returncode, e.stderr.strip())
+            logger.debug("exec_on_node %s failed (rc=%d): %s %s",
+                         node, e.returncode, e.stdout.strip(), e.stderr.strip())
             raise
         except subprocess.TimeoutExpired:
             logger.warning("exec_on_node %s timed out after %ds", node, timeout)
             raise
+
+    @classmethod
+    def get_container_label(cls, node: str, label: str) -> str:
+        """Get a Docker label value for a node's container.
+
+        Args:
+            node: Node name
+            label: Label key (e.g. ``faultstorm.dc``)
+
+        Returns:
+            Label value string (empty string if label not set)
+
+        Raises:
+            RuntimeError: If container cannot be inspected
+        """
+        container = cls._container_name(node)
+        fmt = '{{index .Config.Labels "' + label + '"}}'
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", fmt, container],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Cannot get label '{label}' for {container}: "
+                f"{e.stderr.strip()}"
+            ) from e
+
+    @classmethod
+    def build_dc_map(cls, nodes: List[str],
+                     label: str = "faultstorm.dc") -> dict:
+        """Build a mapping from DC names to lists of nodes.
+
+        Reads the specified Docker label from each node's container
+        and groups nodes by their DC value. Nodes without the label
+        are skipped.
+
+        Args:
+            nodes: List of node names to inspect
+            label: Docker label key for DC assignment
+
+        Returns:
+            Dict mapping DC name to list of node names.
+            Example: ``{"dc1": ["postgresql1", "zookeeper1"], ...}``
+        """
+        dc_map: dict = {}
+        for node in nodes:
+            try:
+                dc = cls.get_container_label(node, label)
+            except RuntimeError:
+                logger.warning("Cannot read label %s for node %s, skipping",
+                               label, node)
+                continue
+            if dc:
+                dc_map.setdefault(dc, []).append(node)
+        return dc_map
 
     @classmethod
     def get_node_ip(cls, node: str) -> str:
