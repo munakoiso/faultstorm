@@ -214,14 +214,15 @@ class FaultEngine:
 
         while not self._stop_event.is_set():
             # 2 complex fault injections per cycle
-            for _ in range(2):
+            for i in range(self.config.parallel_faults_count):
                 self._inject_complex_fault(db, extra, load_node, dc_map,
                                            fault_classes, complex_classes)
-                wait_sec = random.randint(min_wait, max_wait)
-                wait_a_bit = WaitAction(db, extra, self._get_next_ordinal(),
-                                        load_node=load_node, dc_map=dc_map,
-                                        seconds=wait_sec)
-                self._log_and_execute(wait_a_bit)
+                if i < self.config.parallel_faults_count - 1:
+                    wait_sec = random.randint(min_wait, max_wait)
+                    wait_a_bit = WaitAction(db, extra, self._get_next_ordinal(),
+                                            load_node=load_node, dc_map=dc_map,
+                                            seconds=wait_sec)
+                    self._log_and_execute(wait_a_bit)
 
             # Wait (active phase)
             wait_active = WaitAction(db, extra, self._get_next_ordinal(),

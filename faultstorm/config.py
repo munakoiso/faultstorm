@@ -71,6 +71,8 @@ class TestConfig:
     complex_fault_min_wait: int = 0
     complex_fault_max_wait: int = 20
 
+    parallel_faults_count: int = 2
+
     # Logging
     operations_log: str = "logs/operations.log"
     scenario_log: str = "logs/scenario.log"
