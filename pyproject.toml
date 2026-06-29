@@ -21,3 +21,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["faultstorm*"]
+
+[tool.setuptools.package-data]
+"faultstorm.scripts" = ["*.sh", "*.conf"]

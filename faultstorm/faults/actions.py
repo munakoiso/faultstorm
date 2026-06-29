@@ -742,6 +742,206 @@ class PartitionRandomDcAction(FaultAction):
                    dc_map=dc_map, dc_name=dc_name)
 
 
+class FreezeProcessesAction(FaultAction):
+    """Freeze random processes on a single node via SIGSTOP/SIGCONT.
+
+    Creates a flag file on the target node that activates the
+    ``process_freezer.sh`` daemon (which must be running as a service).
+    The flag file contains process name patterns (one per line).
+    The daemon picks a random matching PID, sends SIGSTOP, waits
+    0.1–3 seconds, sends SIGCONT, and repeats.
+
+    Healing removes the flag file, which causes the daemon to stop
+    the freeze loop.
+
+    Serialized format: ``<ordinal> <node> <processes_csv>``
+    """
+
+    name = "freeze_processes"
+    healable = True
+    host_targetable = True
+
+    #: Default flag file path on target nodes.
+    FLAG_FILE = "/tmp/.process_freezer.flag"
+
+    #: Default log file path on target nodes.
+    LOG_FILE = "/var/log/process_freezer.log"
+
+    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
+                 ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
+                 node: Optional[str] = None,
+                 processes: Optional[List[str]] = None):
+        """Initialize.
+
+        Args:
+            db_nodes: Database node names
+            extra_nodes: Extra infrastructure node names
+            ordinal: Sequential fault number
+            load_node: Load generator node name (not used by this action)
+            dc_map: DC-to-nodes mapping (not used by this action)
+            node: Specific node to target (None = pick random DB node)
+            processes: Process name patterns to freeze.
+                       Defaults to ["postgres"].
+        """
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
+        self.node = node
+        self.processes = processes or ["postgres"]
+
+    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+        if self.node is None:
+            self.node = random.choice(self.db_nodes)
+        patterns = '\n'.join(self.processes)
+        logger.info("Freeze processes on %s: patterns=%s",
+                     self.node, self.processes)
+        try:
+            ClusterManager.exec_on_node(
+                self.node,
+                ["bash", "-c", f"echo '{patterns}' > {self.FLAG_FILE}"],
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning("Freeze on %s failed: %s", self.node, e)
+
+    def heal(self) -> None:
+        logger.info("Healing freeze on %s", self.node)
+        try:
+            ClusterManager.exec_on_node(
+                self.node,
+                ["rm", "-f", self.FLAG_FILE],
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning("Heal freeze on %s failed: %s", self.node, e)
+
+    def serialize(self) -> str:
+        processes_csv = ','.join(self.processes)
+        return f"{self.ordinal} {self.node or ''} {processes_csv}"
+
+    @classmethod
+    def deserialize(cls, params: str, db_nodes: List[str],
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'FreezeProcessesAction':
+        parts = params.strip().split()
+        ordinal = int(parts[0])
+        node = parts[1] if len(parts) > 1 else None
+        processes = parts[2].split(',') if len(parts) > 2 and parts[2] else ["postgres"]
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, node=node, processes=processes)
+
+
+class FreezeProcessesGroupAction(FaultAction):
+    """Freeze random processes on an entire node group simultaneously.
+
+    Randomly picks a node group (``db`` or ``extra``) and creates the
+    flag file on every node in that group at once. This simulates
+    system-wide slowdowns affecting all instances of one role (e.g.
+    all database nodes or all ZooKeeper nodes).
+
+    Serialized format: ``<ordinal> <group> <processes_csv>``
+
+    Where ``group`` is ``db`` or ``extra``.
+    """
+
+    name = "freeze_processes_group"
+    healable = True
+
+    #: Default flag file path on target nodes.
+    FLAG_FILE = "/tmp/.process_freezer.flag"
+
+    # Group constants
+    GROUP_DB = "db"
+    GROUP_EXTRA = "extra"
+    GROUPS = [GROUP_DB, GROUP_EXTRA]
+
+    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
+                 ordinal: int = 0,
+                 load_node: Optional[str] = None,
+                 dc_map: Optional[Dict[str, List[str]]] = None,
+                 group: Optional[str] = None,
+                 processes: Optional[List[str]] = None):
+        """Initialize.
+
+        Args:
+            db_nodes: Database node names
+            extra_nodes: Extra infrastructure node names
+            ordinal: Sequential fault number
+            load_node: Load generator node name (not used by this action)
+            dc_map: DC-to-nodes mapping (not used by this action)
+            group: Node group to target: ``db`` or ``extra``.
+                   None = pick randomly on execute.
+            processes: Process name patterns to freeze.
+                       Defaults to ["postgres"].
+        """
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                         dc_map=dc_map)
+        self.group = group
+        self.processes = processes or ["postgres"]
+
+    def _target_nodes(self) -> List[str]:
+        """Return the list of nodes for the chosen group."""
+        if self.group == self.GROUP_EXTRA:
+            return list(self.extra_nodes)
+        return list(self.db_nodes)
+
+    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+        if self.group is None:
+            # Only pick from groups that have nodes
+            candidates = [g for g in self.GROUPS
+                          if (g == self.GROUP_DB and self.db_nodes)
+                          or (g == self.GROUP_EXTRA and self.extra_nodes)]
+            if not candidates:
+                logger.warning("freeze_processes_group: no nodes available")
+                return
+            self.group = random.choice(candidates)
+
+        targets = self._target_nodes()
+        patterns = '\n'.join(self.processes)
+        logger.info("Freeze processes on %s group (%s): patterns=%s",
+                     self.group, targets, self.processes)
+        for node in targets:
+            try:
+                ClusterManager.exec_on_node(
+                    node,
+                    ["bash", "-c", f"echo '{patterns}' > {self.FLAG_FILE}"],
+                    timeout=10,
+                )
+            except Exception as e:
+                logger.warning("Freeze on %s failed: %s", node, e)
+
+    def heal(self) -> None:
+        targets = self._target_nodes()
+        logger.info("Healing freeze on %s group (%s)", self.group, targets)
+        for node in targets:
+            try:
+                ClusterManager.exec_on_node(
+                    node,
+                    ["rm", "-f", self.FLAG_FILE],
+                    timeout=10,
+                )
+            except Exception as e:
+                logger.warning("Heal freeze on %s failed: %s", node, e)
+
+    def serialize(self) -> str:
+        processes_csv = ','.join(self.processes)
+        return f"{self.ordinal} {self.group or ''} {processes_csv}"
+
+    @classmethod
+    def deserialize(cls, params: str, db_nodes: List[str],
+                    extra_nodes: List[str],
+                    load_node: Optional[str] = None,
+                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'FreezeProcessesGroupAction':
+        parts = params.strip().split()
+        ordinal = int(parts[0])
+        group = parts[1] if len(parts) > 1 else None
+        processes = parts[2].split(',') if len(parts) > 2 and parts[2] else ["postgres"]
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
+                   dc_map=dc_map, group=group, processes=processes)
+
+
 # ---- Registry factory ----
 
 
@@ -759,4 +959,6 @@ def create_default_registry() -> FaultRegistry:
     registry.register(PartitionRandomNodeAction)
     registry.register(PartitionRandomSubnetAction)
     registry.register(PartitionRandomDcAction)
+    registry.register(FreezeProcessesAction)
+    registry.register(FreezeProcessesGroupAction)
     return registry

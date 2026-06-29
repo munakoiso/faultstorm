@@ -5,8 +5,9 @@ BEHAVE_ARGS ?=
 PYTHONPATH := $(CURDIR)
 PYTHON ?= /usr/bin/python3
 
-# Build test containers
+# Copy bundled scripts into Docker build context before building
 test-build:
+	cp faultstorm/scripts/process_freezer.sh tests/docker/process_freezer.sh
 	PATH="/opt/homebrew/bin:/usr/local/bin:$$PATH" docker compose -f $(COMPOSE_FILE) build
 
 # Start test containers

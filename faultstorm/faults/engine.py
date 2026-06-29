@@ -309,12 +309,14 @@ class FaultEngine:
             cls = random.choice(available)
             ordinal = self._get_next_ordinal()
 
+            # Merge per-action params from config (e.g. processes for freeze)
+            extra_kwargs = dict(self.config.action_params.get(cls.name, {}))
+
             if target_node is not None:
-                action = cls(db, extra, ordinal, load_node=load_node,
-                             dc_map=dc_map, node=target_node)
-            else:
-                action = cls(db, extra, ordinal, load_node=load_node,
-                             dc_map=dc_map)
+                extra_kwargs['node'] = target_node
+
+            action = cls(db, extra, ordinal, load_node=load_node,
+                         dc_map=dc_map, **extra_kwargs)
 
             if action.destructive:
                 self._destructive_count += 1

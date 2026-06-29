@@ -7,7 +7,7 @@ by the DatabaseClient implementation.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -89,6 +89,12 @@ class TestConfig:
     # Load generator node (the node running write/read traffic).
     # Passed to fault actions but only used by PartitionRandomSubnetAction.
     load_node: Optional[str] = None
+
+    # Per-action constructor overrides.
+    # Maps action name to a dict of keyword arguments that will be
+    # merged into every constructor call for that action type.
+    # Example: ``{"freeze_processes": {"processes": ["postgres", "pgconsul"]}}``
+    action_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def all_nodes(self) -> List[str]:

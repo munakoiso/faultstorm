@@ -45,9 +45,25 @@ def _run_compose(args: list, check: bool = True) -> None:
     subprocess.run(cmd, check=check, capture_output=True, text=True, timeout=120)
 
 
+def _copy_bundled_scripts() -> None:
+    """Copy bundled faultstorm scripts into the Docker build context."""
+    import shutil
+    src = os.path.join(os.path.dirname(__file__), os.pardir,
+                       "faultstorm", "scripts", "process_freezer.sh")
+    dst = os.path.join(os.path.dirname(__file__), "docker", "process_freezer.sh")
+    src = os.path.normpath(src)
+    dst = os.path.normpath(dst)
+    if os.path.isfile(src):
+        shutil.copy2(src, dst)
+        logger.info("Copied %s -> %s", src, dst)
+    else:
+        logger.warning("process_freezer.sh not found at %s", src)
+
+
 def before_all(context):
     """Start Docker Compose environment and configure ClusterManager."""
     _ensure_path()
+    _copy_bundled_scripts()
 
     # Container name equals the container_name in docker-compose.yml
     # which is "faultstorm_<service>", and we use those as node names directly.
@@ -63,9 +79,27 @@ def before_all(context):
     context.dc_map = dict(DC_MAP)
 
 
+FREEZE_FLAG_FILE = "/tmp/.process_freezer.flag"
+FREEZE_LOG_FILE = "/var/log/process_freezer.log"
+
+
 def before_scenario(context, scenario):
-    """Clean up iptables rules and processes before each scenario."""
+    """Clean up iptables rules, freeze flags and processes before each scenario."""
     for node in ALL_NODES:
+        # Remove freeze flag file (deactivate freezer)
+        try:
+            ClusterManager.exec_on_node(
+                node, ["rm", "-f", FREEZE_FLAG_FILE], timeout=5
+            )
+        except Exception:
+            pass
+        # Truncate freeze log so each scenario starts fresh
+        try:
+            ClusterManager.exec_on_node(
+                node, ["truncate", "-s", "0", FREEZE_LOG_FILE], timeout=5
+            )
+        except Exception:
+            pass
         # Flush all iptables rules to ensure clean state
         try:
             ClusterManager.exec_on_node(
