@@ -3,7 +3,7 @@ Data models for FaultStorm test results.
 """
 
 from dataclasses import dataclass, field
-from typing import Set, Optional
+from typing import Optional, Set
 
 
 @dataclass
@@ -21,6 +21,7 @@ class CheckResult:
         write_availability: Fraction of successful writes
         errors: Optional error message
     """
+
     valid: bool = True
     lost: Set[int] = field(default_factory=set)
     unexpected: Set[int] = field(default_factory=set)

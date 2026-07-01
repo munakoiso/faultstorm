@@ -18,3 +18,6 @@ faultstorm/faults/__init__.py
 faultstorm/faults/actions.py
 faultstorm/faults/engine.py
 faultstorm/faults/partitioners.py
+faultstorm/scripts/__init__.py
+faultstorm/scripts/process_freezer.sh
+faultstorm/scripts/process_freezer.supervisor.conf

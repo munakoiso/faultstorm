@@ -8,23 +8,23 @@ and an engine with random/replay modes.
 from faultstorm.faults.actions import (
     FaultAction,
     FaultRegistry,
-    WaitAction,
     KillProcessAction,
-    PartitionRandomHalvesAction,
     PartitionMajoritiesRingAction,
+    PartitionRandomHalvesAction,
     PartitionRandomNodeAction,
+    WaitAction,
     create_default_registry,
 )
 from faultstorm.faults.engine import FaultEngine
 
 __all__ = [
-    'FaultAction',
-    'FaultRegistry',
-    'WaitAction',
-    'KillProcessAction',
-    'PartitionRandomHalvesAction',
-    'PartitionMajoritiesRingAction',
-    'PartitionRandomNodeAction',
-    'create_default_registry',
-    'FaultEngine',
+    "FaultAction",
+    "FaultRegistry",
+    "WaitAction",
+    "KillProcessAction",
+    "PartitionRandomHalvesAction",
+    "PartitionMajoritiesRingAction",
+    "PartitionRandomNodeAction",
+    "create_default_registry",
+    "FaultEngine",
 ]

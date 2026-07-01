@@ -32,9 +32,8 @@ import logging
 import random
 import re
 import threading
-import time
 from datetime import datetime
-from typing import Dict, List, Optional, IO
+from typing import IO, Dict, List, Optional, Type
 
 from faultstorm.config import TestConfig
 from faultstorm.faults.actions import (
@@ -46,12 +45,12 @@ from faultstorm.faults.actions import (
 logger = logging.getLogger(__name__)
 
 # Strip optional timestamp prefix: [2026-06-23T14:05:30.123]
-_TIMESTAMP_RE = re.compile(r'^\[[\d\-T:.]+\]\s*')
+_TIMESTAMP_RE = re.compile(r"^\[[\d\-T:.]+\]\s*")
 
 
 def _timestamp() -> str:
     """Current timestamp for scenario lines."""
-    return datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
 
 class FaultEngine:
@@ -63,8 +62,12 @@ class FaultEngine:
       - run_replay(): deterministic replay from a scenario log
     """
 
-    def __init__(self, config: TestConfig, registry: FaultRegistry,
-                 dc_map: Optional[Dict[str, List[str]]] = None):
+    def __init__(
+        self,
+        config: TestConfig,
+        registry: FaultRegistry,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ):
         """Initialize fault engine.
 
         Args:
@@ -77,7 +80,7 @@ class FaultEngine:
         self.registry = registry
         self.dc_map = dc_map or {}
         self._stop_event = threading.Event()
-        self._log_file: Optional[IO] = None
+        self._log_file: Optional[IO[str]] = None
         self._active_faults: List[FaultAction] = []
         self._next_ordinal = 0
         self._destructive_count = 0
@@ -91,7 +94,7 @@ class FaultEngine:
 
     def _open_log(self, path: str) -> None:
         """Open scenario log file for writing."""
-        self._log_file = open(path, 'w')
+        self._log_file = open(path, "w")
         self._log_file.write("# FaultStorm scenario log\n")
         self._log_file.write(f"# Generated at {_timestamp()}\n")
         self._log_file.write("#\n")
@@ -161,7 +164,7 @@ class FaultEngine:
         fault_classes = self.registry.get_classes(self.config.fault_types)
 
         # Build list of host-targetable classes for complex faults
-        complex_classes: List[type] = []
+        complex_classes: List[Type[FaultAction]] = []
         if self.config.complex_faults_enabled:
             complex_classes = [c for c in fault_classes if c.host_targetable]
             if complex_classes:
@@ -182,9 +185,12 @@ class FaultEngine:
         finally:
             self._close_log()
 
-    def _random_loop(self, duration: int,
-                     fault_classes: List[type],
-                     complex_classes: List[type]) -> None:
+    def _random_loop(
+        self,
+        duration: int,
+        fault_classes: List[Type[FaultAction]],
+        complex_classes: List[Type[FaultAction]],
+    ) -> None:
         """Main random-mode loop.
 
         Runs fault injection cycles for at most ``duration`` seconds.
@@ -203,8 +209,11 @@ class FaultEngine:
         finally:
             timer.cancel()
 
-    def _do_random_loop(self, fault_classes: List[type],
-                        complex_classes: List[type]) -> None:
+    def _do_random_loop(
+        self,
+        fault_classes: List[Type[FaultAction]],
+        complex_classes: List[Type[FaultAction]],
+    ) -> None:
         """Inner random-mode loop (runs until ``_stop_event`` is set)."""
         db = self.config.db_nodes
         extra = self.config.extra_nodes
@@ -216,19 +225,30 @@ class FaultEngine:
         while not self._stop_event.is_set():
             # 2 complex fault injections per cycle
             for i in range(self.config.parallel_faults_count):
-                self._inject_complex_fault(db, extra, load_node, dc_map,
-                                           fault_classes, complex_classes)
+                self._inject_complex_fault(
+                    db, extra, load_node, dc_map, fault_classes, complex_classes
+                )
                 if i < self.config.parallel_faults_count - 1:
                     wait_sec = random.randint(min_wait, max_wait)
-                    wait_a_bit = WaitAction(db, extra, self._get_next_ordinal(),
-                                            load_node=load_node, dc_map=dc_map,
-                                            seconds=wait_sec)
+                    wait_a_bit = WaitAction(
+                        db,
+                        extra,
+                        self._get_next_ordinal(),
+                        load_node=load_node,
+                        dc_map=dc_map,
+                        seconds=wait_sec,
+                    )
                     self._log_and_execute(wait_a_bit)
 
             # Wait (active phase)
-            wait_active = WaitAction(db, extra, self._get_next_ordinal(),
-                                     load_node=load_node, dc_map=dc_map,
-                                     seconds=self.config.fault_active_duration)
+            wait_active = WaitAction(
+                db,
+                extra,
+                self._get_next_ordinal(),
+                load_node=load_node,
+                dc_map=dc_map,
+                seconds=self.config.fault_active_duration,
+            )
             self._log_and_execute(wait_active)
             if self._stop_event.is_set():
                 break
@@ -237,12 +257,19 @@ class FaultEngine:
             self._heal_all_active()
 
             # Wait (pause phase)
-            wait_pause = WaitAction(db, extra, self._get_next_ordinal(),
-                                    load_node=load_node, dc_map=dc_map,
-                                    seconds=self.config.fault_pause_duration)
+            wait_pause = WaitAction(
+                db,
+                extra,
+                self._get_next_ordinal(),
+                load_node=load_node,
+                dc_map=dc_map,
+                seconds=self.config.fault_pause_duration,
+            )
             self._log_and_execute(wait_pause)
 
-    def _filter_by_destructive_limit(self, classes: List[type]) -> List[type]:
+    def _filter_by_destructive_limit(
+        self, classes: List[Type[FaultAction]]
+    ) -> List[Type[FaultAction]]:
         """Filter out destructive classes if the limit has been reached.
 
         When ``max_destructive_actions`` is set and the counter has
@@ -254,11 +281,15 @@ class FaultEngine:
             return [c for c in classes if not c.destructive]
         return classes
 
-    def _inject_complex_fault(self, db: List[str], extra: List[str],
-                              load_node: Optional[str],
-                              dc_map: Dict[str, List[str]],
-                              fault_classes: List[type],
-                              complex_classes: List[type]) -> None:
+    def _inject_complex_fault(
+        self,
+        db: List[str],
+        extra: List[str],
+        load_node: Optional[str],
+        dc_map: Dict[str, List[str]],
+        fault_classes: List[Type[FaultAction]],
+        complex_classes: List[Type[FaultAction]],
+    ) -> None:
         """Inject a single fault or a multi-fault combo on one host.
 
         If ``complex_classes`` is non-empty, randomly chooses between:
@@ -290,8 +321,7 @@ class FaultEngine:
             pool = complex_classes
             fault_count = random.randint(1, 3)
             target_node = random.choice(db)
-            logger.info("Complex fault: %d faults on %s",
-                        fault_count, target_node)
+            logger.info("Complex fault: %d faults on %s", fault_count, target_node)
         else:
             pool = fault_classes
             fault_count = 1
@@ -313,10 +343,9 @@ class FaultEngine:
             extra_kwargs = dict(self.config.action_params.get(cls.name, {}))
 
             if target_node is not None:
-                extra_kwargs['node'] = target_node
+                extra_kwargs["node"] = target_node
 
-            action = cls(db, extra, ordinal, load_node=load_node,
-                         dc_map=dc_map, **extra_kwargs)
+            action = cls(db, extra, ordinal, load_node=load_node, dc_map=dc_map, **extra_kwargs)
 
             if action.destructive:
                 self._destructive_count += 1
@@ -328,9 +357,14 @@ class FaultEngine:
             # Random wait between component faults (not after the last)
             if i < fault_count - 1:
                 wait_sec = random.randint(min_wait, max_wait)
-                wait = WaitAction(db, extra, self._get_next_ordinal(),
-                                  load_node=load_node, dc_map=dc_map,
-                                  seconds=wait_sec)
+                wait = WaitAction(
+                    db,
+                    extra,
+                    self._get_next_ordinal(),
+                    load_node=load_node,
+                    dc_map=dc_map,
+                    seconds=wait_sec,
+                )
                 self._log_and_execute(wait)
 
     def _log_and_execute(self, action: FaultAction) -> None:
@@ -355,17 +389,18 @@ class FaultEngine:
                 if action.destructive:
                     self._destructive_count -= 1
             except Exception as e:
-                logger.error("Heal %s ordinal=%d failed: %s",
-                             action.name, action.ordinal, e)
+                logger.error("Heal %s ordinal=%d failed: %s", action.name, action.ordinal, e)
             self._write_action(action, healing=True)
 
             # Random wait between heals (not after the last)
             if i < len(faults) - 1:
                 wait_sec = random.randint(min_wait, max_wait)
                 wait = WaitAction(
-                    self.config.db_nodes, self.config.extra_nodes,
+                    self.config.db_nodes,
+                    self.config.extra_nodes,
                     self._get_next_ordinal(),
-                    load_node=self.config.load_node, dc_map=self.dc_map,
+                    load_node=self.config.load_node,
+                    dc_map=self.dc_map,
                     seconds=wait_sec,
                 )
                 self._log_and_execute(wait)
@@ -394,15 +429,16 @@ class FaultEngine:
                     try:
                         action.heal()
                     except Exception as e:
-                        logger.error("Heal %s ordinal=%d failed: %s",
-                                     action.name, action.ordinal, e)
+                        logger.error(
+                            "Heal %s ordinal=%d failed: %s", action.name, action.ordinal, e
+                        )
                     self._write_action(action, healing=True)
                 else:
                     self._log_and_execute(action)
         finally:
             self._close_log()
 
-    def _parse_log(self, path: str) -> List[tuple]:
+    def _parse_log(self, path: str) -> List[tuple[FaultAction, bool]]:
         """Parse a scenario log file into a list of (action, is_heal) tuples.
 
         Args:
@@ -415,23 +451,23 @@ class FaultEngine:
         extra = self.config.extra_nodes
         load_node = self.config.load_node
         dc_map = self.dc_map
-        results: List[tuple] = []
+        results: List[tuple[FaultAction, bool]] = []
 
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             for line_no, raw_line in enumerate(f, 1):
                 line = raw_line.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
 
                 # Strip optional timestamp prefix
-                line = _TIMESTAMP_RE.sub('', line)
-                if not line or line.startswith('#'):
+                line = _TIMESTAMP_RE.sub("", line)
+                if not line or line.startswith("#"):
                     continue
 
                 # Check for +/- prefix (healable actions)
                 is_heal = False
-                if line.startswith('+') or line.startswith('-'):
-                    is_heal = line.startswith('-')
+                if line.startswith("+") or line.startswith("-"):
+                    is_heal = line.startswith("-")
                     line = line[1:]
 
                 # Split: first word is action name, rest is params
@@ -446,8 +482,7 @@ class FaultEngine:
                         f"Available: {', '.join(self.registry.list_names())}"
                     )
 
-                action = cls.deserialize(params, db, extra, load_node=load_node,
-                                         dc_map=dc_map)
+                action = cls.deserialize(params, db, extra, load_node=load_node, dc_map=dc_map)
                 results.append((action, is_heal))
 
         logger.info("Parsed scenario %s: %d entries", path, len(results))

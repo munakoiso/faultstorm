@@ -1,9 +1,10 @@
-.PHONY: help lint lint-fix mypy test clean install-dev venv activate test-up test-down test-build
+.PHONY: help check lint lint-fix mypy test clean install-dev venv activate test-up test-down test-build
 
 help:
 	@echo "Available targets:"
 	@echo "  make venv           - Create virtual environment"
 	@echo "  make activate       - Show command to activate virtual environment"
+	@echo "  make check         - Set up venv, install deps, run all checks (lint + mypy)"
 	@echo "  make lint          - Run linters (flake8, isort, black --check)"
 	@echo "  make lint-fix      - Fix linting issues (isort, black)"
 	@echo "  make mypy          - Run mypy type checker"
@@ -12,14 +13,13 @@ help:
 	@echo "  make install-dev   - Install development dependencies"
 
 VENV := .venv
-PYTHON := $(VENV)/bin/python
+PYTHON := $(CURDIR)/$(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 ACTIVATE := source $(VENV)/bin/activate
 
 COMPOSE_FILE := tests/docker-compose.yml
 BEHAVE_ARGS ?=
 PYTHONPATH := $(CURDIR)
-PYTHON ?= /usr/bin/python3
 
 venv:
 	@echo "Creating virtual environment..."
@@ -31,6 +31,8 @@ venv:
 activate:
 	@echo "Run the following command to activate the virtual environment:"
 	@echo "  $(ACTIVATE)"
+
+check: venv install-dev lint mypy
 
 lint:
 	@echo "Running flake8..."

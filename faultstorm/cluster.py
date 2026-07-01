@@ -50,8 +50,7 @@ class ClusterManager:
         return cls.container_template.format(node=node)
 
     @classmethod
-    def exec_on_node(cls, node: str, command: List[str],
-                     timeout: int = 30) -> str:
+    def exec_on_node(cls, node: str, command: List[str], timeout: int = 30) -> str:
         """Execute command on a node via docker exec.
 
         Args:
@@ -68,7 +67,7 @@ class ClusterManager:
         """
         container = cls._container_name(node)
         docker_cmd = ["docker", "exec", container] + command
-        logger.debug("exec_on_node %s: %s", node, ' '.join(docker_cmd))
+        logger.debug("exec_on_node %s: %s", node, " ".join(docker_cmd))
         try:
             result = subprocess.run(
                 docker_cmd,
@@ -79,8 +78,13 @@ class ClusterManager:
             )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            logger.debug("exec_on_node %s failed (rc=%d): %s %s",
-                         node, e.returncode, e.stdout.strip(), e.stderr.strip())
+            logger.debug(
+                "exec_on_node %s failed (rc=%d): %s %s",
+                node,
+                e.returncode,
+                e.stdout.strip(),
+                e.stderr.strip(),
+            )
             raise
         except subprocess.TimeoutExpired:
             logger.warning("exec_on_node %s timed out after %ds", node, timeout)
@@ -113,13 +117,11 @@ class ClusterManager:
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
-                f"Cannot get label '{label}' for {container}: "
-                f"{e.stderr.strip()}"
+                f"Cannot get label '{label}' for {container}: " f"{e.stderr.strip()}"
             ) from e
 
     @classmethod
-    def build_dc_map(cls, nodes: List[str],
-                     label: str = "faultstorm.dc") -> dict:
+    def build_dc_map(cls, nodes: List[str], label: str = "faultstorm.dc") -> dict[str, List[str]]:
         """Build a mapping from DC names to lists of nodes.
 
         Reads the specified Docker label from each node's container
@@ -134,13 +136,12 @@ class ClusterManager:
             Dict mapping DC name to list of node names.
             Example: ``{"dc1": ["postgresql1", "zookeeper1"], ...}``
         """
-        dc_map: dict = {}
+        dc_map: dict[str, List[str]] = {}
         for node in nodes:
             try:
                 dc = cls.get_container_label(node, label)
             except RuntimeError:
-                logger.warning("Cannot read label %s for node %s, skipping",
-                               label, node)
+                logger.warning("Cannot read label %s for node %s, skipping", label, node)
                 continue
             if dc:
                 dc_map.setdefault(dc, []).append(node)
@@ -161,9 +162,9 @@ class ClusterManager:
         """
         container = cls._container_name(node)
         if cls.network_name:
-            fmt = '{{.NetworkSettings.Networks.' + cls.network_name + '.IPAddress}}'
+            fmt = "{{.NetworkSettings.Networks." + cls.network_name + ".IPAddress}}"
         else:
-            fmt = '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+            fmt = "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
         try:
             result = subprocess.run(
                 ["docker", "inspect", "-f", fmt, container],
@@ -174,11 +175,7 @@ class ClusterManager:
             )
             ip = result.stdout.strip()
             if not ip:
-                raise RuntimeError(
-                    f"Empty IP for container {container}"
-                )
+                raise RuntimeError(f"Empty IP for container {container}")
             return ip
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Cannot get IP for {container}: {e.stderr.strip()}"
-            ) from e
+            raise RuntimeError(f"Cannot get IP for {container}: {e.stderr.strip()}") from e

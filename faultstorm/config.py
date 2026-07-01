@@ -55,14 +55,16 @@ class TestConfig:
     # Fault configuration
     fault_active_duration: int = 60
     fault_pause_duration: int = 60
-    fault_types: List[str] = field(default_factory=lambda: [
-        "partition_random_halves",
-        "partition_majorities_ring",
-        "partition_random_node",
-        "partition_random_subnet",
-        "partition_random_dc",
-        "kill",
-    ])
+    fault_types: List[str] = field(
+        default_factory=lambda: [
+            "partition_random_halves",
+            "partition_majorities_ring",
+            "partition_random_node",
+            "partition_random_subnet",
+            "partition_random_dc",
+            "kill",
+        ]
+    )
 
     # Complex faults: combine 1-3 host-targetable faults on a single DB node.
     # The list of eligible fault types is built dynamically from ``fault_types``

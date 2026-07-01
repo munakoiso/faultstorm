@@ -25,9 +25,7 @@ def get_script_path(name: str) -> str:
     """
     path = os.path.join(_SCRIPTS_DIR, name)
     if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"Script '{name}' not found in {_SCRIPTS_DIR}"
-        )
+        raise FileNotFoundError(f"Script '{name}' not found in {_SCRIPTS_DIR}")
     return path
 
 
@@ -45,7 +43,5 @@ def get_supervisor_conf_path(name: str) -> str:
     """
     path = os.path.join(_SCRIPTS_DIR, name)
     if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"Supervisor config '{name}' not found in {_SCRIPTS_DIR}"
-        )
+        raise FileNotFoundError(f"Supervisor config '{name}' not found in {_SCRIPTS_DIR}")
     return path

@@ -8,7 +8,7 @@ and recovered (indeterminate) writes.
 
 import json
 import logging
-from typing import List, Set
+from typing import Any, List, Set
 
 from faultstorm.model import CheckResult
 
@@ -21,7 +21,7 @@ FAIL = "fail"
 INFO = "info"
 
 
-def parse_operations_log(log_path: str) -> List[dict]:
+def parse_operations_log(log_path: str) -> List[dict[str, Any]]:
     """Parse JSON operations log file.
 
     Each line is a JSON object with keys: type, action, value, node, timestamp.
@@ -32,8 +32,8 @@ def parse_operations_log(log_path: str) -> List[dict]:
     Returns:
         List of operation dicts
     """
-    operations: List[dict] = []
-    with open(log_path, 'r') as f:
+    operations: List[dict[str, Any]] = []
+    with open(log_path, "r") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -66,9 +66,9 @@ def check_consistency(operations_log: str) -> CheckResult:
     """
     operations = parse_operations_log(operations_log)
 
-    attempted: Set[int] = set()       # All values we tried to write (INVOKE)
-    successful: Set[int] = set()      # Values confirmed written (OK)
-    failed: Set[int] = set()          # Values confirmed NOT written (FAIL)
+    attempted: Set[int] = set()  # All values we tried to write (INVOKE)
+    successful: Set[int] = set()  # Values confirmed written (OK)
+    failed: Set[int] = set()  # Values confirmed NOT written (FAIL)
     # INFO values are in attempted but not in successful or failed
     final_read: Set[int] = set()
     read_count = 0
@@ -81,12 +81,13 @@ def check_consistency(operations_log: str) -> CheckResult:
             continue
 
         if action == "add":
+            int_value = int(value)
             if op_type == INVOKE:
-                attempted.add(value)
+                attempted.add(int_value)
             elif op_type == OK:
-                successful.add(value)
+                successful.add(int_value)
             elif op_type == FAIL:
-                failed.add(value)
+                failed.add(int_value)
             # INFO: indeterminate — already in attempted, not in successful/failed
 
         elif action == "read":
@@ -112,7 +113,7 @@ def check_consistency(operations_log: str) -> CheckResult:
 
     write_availability = 0.0
     if total_attempts > 0:
-        write_availability = successful_adds / total_attempts        
+        write_availability = successful_adds / total_attempts
 
     valid = len(lost) == 0 and len(unexpected) == 0
 
@@ -128,11 +129,13 @@ def check_consistency(operations_log: str) -> CheckResult:
     )
 
     if valid:
-        logger.info("Consistency check PASSED: %d successful writes, "
-                     "%d recovered, availability %.2f%%",
-                     successful_adds, len(recovered), write_availability * 100)
+        logger.info(
+            "Consistency check PASSED: %d successful writes, " "%d recovered, availability %.2f%%",
+            successful_adds,
+            len(recovered),
+            write_availability * 100,
+        )
     else:
-        logger.error("Consistency check FAILED: %d lost, %d unexpected",
-                      len(lost), len(unexpected))
+        logger.error("Consistency check FAILED: %d lost, %d unexpected", len(lost), len(unexpected))
 
     return result

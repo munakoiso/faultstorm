@@ -16,8 +16,8 @@ from faultstorm.model import CheckResult
 from faultstorm.runner import TestRunner
 
 __all__ = [
-    'TestConfig',
-    'DatabaseClient',
-    'CheckResult',
-    'TestRunner',
+    "TestConfig",
+    "DatabaseClient",
+    "CheckResult",
+    "TestRunner",
 ]

@@ -20,8 +20,8 @@ Class.deserialize(params_string, db_nodes, extra_nodes, load_node, dc_map).
 
 import logging
 import random
-import time
 import threading
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Type
 
@@ -63,10 +63,14 @@ class FaultAction(ABC):
     #: Used by the engine to build complex (multi-fault) host scenarios.
     host_targetable: bool = False
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None):
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ):
         self.db_nodes = db_nodes
         self.extra_nodes = extra_nodes
         self.ordinal = ordinal
@@ -105,10 +109,14 @@ class FaultAction(ABC):
 
     @classmethod
     @abstractmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'FaultAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "FaultAction":
         """Reconstruct an action from a serialized parameter string.
 
         Must parse ordinal from the first element.
@@ -147,7 +155,7 @@ class FaultRegistry:
     def __init__(self) -> None:
         self._registry: dict[str, Type[FaultAction]] = {}
 
-    def register(self, action_cls: Type[FaultAction]) -> 'FaultRegistry':
+    def register(self, action_cls: Type[FaultAction]) -> "FaultRegistry":
         """Register an action class.
 
         Args:
@@ -193,10 +201,8 @@ class FaultRegistry:
         for name in names:
             cls = self._registry.get(name)
             if cls is None:
-                available = ', '.join(sorted(self._registry.keys()))
-                raise ValueError(
-                    f"Unknown fault action '{name}'. Available: {available}"
-                )
+                available = ", ".join(sorted(self._registry.keys()))
+                raise ValueError(f"Unknown fault action '{name}'. Available: {available}")
             result.append(cls)
         return result
 
@@ -220,13 +226,16 @@ class WaitAction(FaultAction):
 
     name = "wait"
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 seconds: int = 0):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        seconds: int = 0,
+    ):
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.seconds = seconds
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
@@ -239,15 +248,20 @@ class WaitAction(FaultAction):
         return f"{self.ordinal} {self.seconds}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'WaitAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "WaitAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         seconds = int(parts[1])
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, seconds=seconds)
+        return cls(
+            db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, seconds=seconds
+        )
 
 
 class KillProcessAction(FaultAction):
@@ -259,12 +273,17 @@ class KillProcessAction(FaultAction):
     name = "kill"
     host_targetable = True
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 process: Optional[str] = None, node: Optional[str] = None,
-                 processes: Optional[List[str]] = None):
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        process: Optional[str] = None,
+        node: Optional[str] = None,
+        processes: Optional[List[str]] = None,
+    ):
         """Initialize.
 
         Args:
@@ -278,8 +297,7 @@ class KillProcessAction(FaultAction):
             processes: Pool of process names to choose from.
                        Defaults to ["postgres", "pgconsul"].
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.process = process
         self.node = node
         self.processes = processes or ["postgres", "pgconsul"]
@@ -291,9 +309,7 @@ class KillProcessAction(FaultAction):
             self.node = random.choice(self.db_nodes)
         logger.info("Killing %s on %s", self.process, self.node)
         try:
-            ClusterManager.exec_on_node(
-                self.node, ["pkill", "-9", self.process], timeout=10
-            )
+            ClusterManager.exec_on_node(self.node, ["pkill", "-9", self.process], timeout=10)
         except Exception as e:
             logger.warning("Kill %s on %s failed: %s", self.process, self.node, e)
 
@@ -301,14 +317,25 @@ class KillProcessAction(FaultAction):
         return f"{self.ordinal} {self.process} {self.node}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'KillProcessAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "KillProcessAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, process=parts[1], node=parts[2])
+        return cls(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            process=parts[1],
+            node=parts[2],
+        )
 
 
 class PartitionRandomHalvesAction(FaultAction):
@@ -320,14 +347,17 @@ class PartitionRandomHalvesAction(FaultAction):
     name = "partition_random_halves"
     healable = True
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 group1: Optional[List[str]] = None,
-                 group2: Optional[List[str]] = None):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        group1: Optional[List[str]] = None,
+        group2: Optional[List[str]] = None,
+    ):
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.group1 = group1
         self.group2 = group2
 
@@ -357,21 +387,32 @@ class PartitionRandomHalvesAction(FaultAction):
         partitioners.heal_partition(self.ordinal, self.all_nodes)
 
     def serialize(self) -> str:
-        g1 = ','.join(self.group1 or [])
-        g2 = ','.join(self.group2 or [])
+        g1 = ",".join(self.group1 or [])
+        g2 = ",".join(self.group2 or [])
         return f"{self.ordinal} {g1} {g2}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomHalvesAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "PartitionRandomHalvesAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
-        group1 = parts[1].split(',')
-        group2 = parts[2].split(',')
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, group1=group1, group2=group2)
+        group1 = parts[1].split(",")
+        group2 = parts[2].split(",")
+        return cls(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            group1=group1,
+            group2=group2,
+        )
 
 
 class PartitionMajoritiesRingAction(FaultAction):
@@ -383,13 +424,16 @@ class PartitionMajoritiesRingAction(FaultAction):
     name = "partition_majorities_ring"
     healable = True
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 ordered: Optional[List[str]] = None):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        ordered: Optional[List[str]] = None,
+    ):
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.ordered = ordered
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
@@ -417,15 +461,20 @@ class PartitionMajoritiesRingAction(FaultAction):
         return f"{self.ordinal} {','.join(self.ordered or [])}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionMajoritiesRingAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "PartitionMajoritiesRingAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
-        ordered = parts[1].split(',')
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, ordered=ordered)
+        ordered = parts[1].split(",")
+        return cls(
+            db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, ordered=ordered
+        )
 
 
 class PartitionRandomNodeAction(FaultAction):
@@ -438,13 +487,16 @@ class PartitionRandomNodeAction(FaultAction):
     healable = True
     host_targetable = True
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 node: Optional[str] = None):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        node: Optional[str] = None,
+    ):
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.node = node
 
     def _affected_nodes(self) -> List[str]:
@@ -480,15 +532,18 @@ class PartitionRandomNodeAction(FaultAction):
         return f"{self.ordinal} {self.node or ''}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomNodeAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "PartitionRandomNodeAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         node = parts[1] if len(parts) > 1 else None
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, node=node)
+        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, node=node)
 
 
 class PartitionRandomSubnetAction(FaultAction):
@@ -526,14 +581,18 @@ class PartitionRandomSubnetAction(FaultAction):
     SUBNET_ALL = "all"
     SUBNET_TYPES = [SUBNET_ZK, SUBNET_DB, SUBNET_ALL]
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 node: Optional[str] = None,
-                 direction: Optional[str] = None,
-                 subnet_type: Optional[str] = None,
-                 blocked_nodes: Optional[List[str]] = None):
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        node: Optional[str] = None,
+        direction: Optional[str] = None,
+        subnet_type: Optional[str] = None,
+        blocked_nodes: Optional[List[str]] = None,
+    ):
         """Initialize.
 
         Args:
@@ -548,8 +607,7 @@ class PartitionRandomSubnetAction(FaultAction):
             blocked_nodes: Explicit list of blocked node names.
                            If None, computed from subnet_type on execute.
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.node = node
         self.direction = direction
         self.subnet_type = subnet_type
@@ -591,56 +649,61 @@ class PartitionRandomSubnetAction(FaultAction):
         ipt_directions = self._get_iptables_directions()
 
         logger.info(
-            "Partition random subnet: node=%s direction=%s subnet=%s "
-            "blocked=%s",
-            self.node, self.direction, self.subnet_type, self.blocked_nodes,
+            "Partition random subnet: node=%s direction=%s subnet=%s " "blocked=%s",
+            self.node,
+            self.direction,
+            self.subnet_type,
+            self.blocked_nodes,
         )
 
         for ipt_dir in ipt_directions:
-            chain_name = partitioners.get_directional_chain_name(
-                self.ordinal, ipt_dir
-            )
-            partitioners.create_chain_for_direction(
-                self.node, chain_name, ipt_dir
-            )
+            chain_name = partitioners.get_directional_chain_name(self.ordinal, ipt_dir)
+            partitioners.create_chain_for_direction(self.node, chain_name, ipt_dir)
             if ipt_dir == "INPUT":
-                partitioners.add_drop_rules_by_src(
-                    self.node, chain_name, blocked_ips
-                )
+                partitioners.add_drop_rules_by_src(self.node, chain_name, blocked_ips)
             else:  # OUTPUT
-                partitioners.add_drop_rules_by_dest(
-                    self.node, chain_name, blocked_ips
-                )
+                partitioners.add_drop_rules_by_dest(self.node, chain_name, blocked_ips)
 
     def heal(self) -> None:
         logger.info(
             "Healing partition random subnet ordinal=%d node=%s",
-            self.ordinal, self.node,
+            self.ordinal,
+            self.node,
         )
         ipt_directions = self._get_iptables_directions()
-        partitioners.heal_directional_partition(
-            self.ordinal, self.node, ipt_directions
-        )
+        assert self.node is not None, "Cannot heal: node was never set"
+        partitioners.heal_directional_partition(self.ordinal, self.node, ipt_directions)
 
     def serialize(self) -> str:
-        blocked_csv = ','.join(self.blocked_nodes or [])
-        return (f"{self.ordinal} {self.node} {self.direction} "
-                f"{self.subnet_type} {blocked_csv}")
+        blocked_csv = ",".join(self.blocked_nodes or [])
+        return f"{self.ordinal} {self.node} {self.direction} " f"{self.subnet_type} {blocked_csv}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomSubnetAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "PartitionRandomSubnetAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         node = parts[1]
         direction = parts[2]
         subnet_type = parts[3]
-        blocked_nodes = parts[4].split(',') if len(parts) > 4 and parts[4] else []
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, node=node, direction=direction,
-                   subnet_type=subnet_type, blocked_nodes=blocked_nodes)
+        blocked_nodes = parts[4].split(",") if len(parts) > 4 and parts[4] else []
+        return cls(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            node=node,
+            direction=direction,
+            subnet_type=subnet_type,
+            blocked_nodes=blocked_nodes,
+        )
 
 
 class PartitionRandomDcAction(FaultAction):
@@ -658,11 +721,15 @@ class PartitionRandomDcAction(FaultAction):
     name = "partition_random_dc"
     healable = True
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 dc_name: Optional[str] = None):
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        dc_name: Optional[str] = None,
+    ):
         """Initialize.
 
         Args:
@@ -674,12 +741,12 @@ class PartitionRandomDcAction(FaultAction):
                     and resolve its nodes)
             dc_name: Specific DC to isolate (None = pick random on execute)
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.dc_name = dc_name
 
     def _get_dc_nodes(self) -> List[str]:
         """Get list of nodes for the chosen DC from dc_map."""
+        assert self.dc_name is not None, "dc_name was never set"
         return list(self.dc_map.get(self.dc_name, []))
 
     def _affected_nodes(self) -> List[str]:
@@ -699,14 +766,12 @@ class PartitionRandomDcAction(FaultAction):
 
         dc_nodes = self._get_dc_nodes()
         if not dc_nodes:
-            logger.warning("partition_random_dc: DC %s has no nodes, skipping",
-                           self.dc_name)
+            logger.warning("partition_random_dc: DC %s has no nodes, skipping", self.dc_name)
             return
 
         affected = self._affected_nodes()
         others = [n for n in affected if n not in dc_nodes]
-        logger.info("Partition DC %s: isolated=%s others=%s",
-                    self.dc_name, dc_nodes, others)
+        logger.info("Partition DC %s: isolated=%s others=%s", self.dc_name, dc_nodes, others)
 
         chain_name = partitioners.get_chain_name(self.ordinal)
 
@@ -723,23 +788,27 @@ class PartitionRandomDcAction(FaultAction):
             partitioners.add_drop_rules_by_src(node, chain_name, dc_ips)
 
     def heal(self) -> None:
-        logger.info("Healing partition DC %s ordinal=%d",
-                    self.dc_name, self.ordinal)
+        logger.info("Healing partition DC %s ordinal=%d", self.dc_name, self.ordinal)
         partitioners.heal_partition(self.ordinal, self._affected_nodes())
 
     def serialize(self) -> str:
         return f"{self.ordinal} {self.dc_name}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'PartitionRandomDcAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "PartitionRandomDcAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         dc_name = parts[1] if len(parts) > 1 else None
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, dc_name=dc_name)
+        return cls(
+            db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, dc_name=dc_name
+        )
 
 
 class FreezeProcessesAction(FaultAction):
@@ -767,12 +836,16 @@ class FreezeProcessesAction(FaultAction):
     #: Default log file path on target nodes.
     LOG_FILE = "/var/log/process_freezer.log"
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 node: Optional[str] = None,
-                 processes: Optional[List[str]] = None):
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        node: Optional[str] = None,
+        processes: Optional[List[str]] = None,
+    ):
         """Initialize.
 
         Args:
@@ -785,17 +858,15 @@ class FreezeProcessesAction(FaultAction):
             processes: Process name patterns to freeze.
                        Defaults to ["postgres"].
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.node = node
         self.processes = processes or ["postgres"]
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
         if self.node is None:
             self.node = random.choice(self.db_nodes)
-        patterns = '\n'.join(self.processes)
-        logger.info("Freeze processes on %s: patterns=%s",
-                     self.node, self.processes)
+        patterns = "\n".join(self.processes)
+        logger.info("Freeze processes on %s: patterns=%s", self.node, self.processes)
         try:
             ClusterManager.exec_on_node(
                 self.node,
@@ -808,6 +879,7 @@ class FreezeProcessesAction(FaultAction):
     def heal(self) -> None:
         logger.info("Healing freeze on %s", self.node)
         try:
+            assert self.node is not None, "Cannot heal: node was never set"
             ClusterManager.exec_on_node(
                 self.node,
                 ["rm", "-f", self.FLAG_FILE],
@@ -817,20 +889,31 @@ class FreezeProcessesAction(FaultAction):
             logger.warning("Heal freeze on %s failed: %s", self.node, e)
 
     def serialize(self) -> str:
-        processes_csv = ','.join(self.processes)
+        processes_csv = ",".join(self.processes)
         return f"{self.ordinal} {self.node or ''} {processes_csv}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'FreezeProcessesAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "FreezeProcessesAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         node = parts[1] if len(parts) > 1 else None
-        processes = parts[2].split(',') if len(parts) > 2 and parts[2] else ["postgres"]
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, node=node, processes=processes)
+        processes = parts[2].split(",") if len(parts) > 2 and parts[2] else ["postgres"]
+        return cls(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            node=node,
+            processes=processes,
+        )
 
 
 class FreezeProcessesGroupAction(FaultAction):
@@ -857,12 +940,16 @@ class FreezeProcessesGroupAction(FaultAction):
     GROUP_EXTRA = "extra"
     GROUPS = [GROUP_DB, GROUP_EXTRA]
 
-    def __init__(self, db_nodes: List[str], extra_nodes: List[str],
-                 ordinal: int = 0,
-                 load_node: Optional[str] = None,
-                 dc_map: Optional[Dict[str, List[str]]] = None,
-                 group: Optional[str] = None,
-                 processes: Optional[List[str]] = None):
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        group: Optional[str] = None,
+        processes: Optional[List[str]] = None,
+    ):
         """Initialize.
 
         Args:
@@ -876,8 +963,7 @@ class FreezeProcessesGroupAction(FaultAction):
             processes: Process name patterns to freeze.
                        Defaults to ["postgres"].
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                         dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
         self.group = group
         self.processes = processes or ["postgres"]
 
@@ -890,18 +976,22 @@ class FreezeProcessesGroupAction(FaultAction):
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
         if self.group is None:
             # Only pick from groups that have nodes
-            candidates = [g for g in self.GROUPS
-                          if (g == self.GROUP_DB and self.db_nodes)
-                          or (g == self.GROUP_EXTRA and self.extra_nodes)]
+            candidates = [
+                g
+                for g in self.GROUPS
+                if (g == self.GROUP_DB and self.db_nodes)
+                or (g == self.GROUP_EXTRA and self.extra_nodes)
+            ]
             if not candidates:
                 logger.warning("freeze_processes_group: no nodes available")
                 return
             self.group = random.choice(candidates)
 
         targets = self._target_nodes()
-        patterns = '\n'.join(self.processes)
-        logger.info("Freeze processes on %s group (%s): patterns=%s",
-                     self.group, targets, self.processes)
+        patterns = "\n".join(self.processes)
+        logger.info(
+            "Freeze processes on %s group (%s): patterns=%s", self.group, targets, self.processes
+        )
         for node in targets:
             try:
                 ClusterManager.exec_on_node(
@@ -926,20 +1016,31 @@ class FreezeProcessesGroupAction(FaultAction):
                 logger.warning("Heal freeze on %s failed: %s", node, e)
 
     def serialize(self) -> str:
-        processes_csv = ','.join(self.processes)
+        processes_csv = ",".join(self.processes)
         return f"{self.ordinal} {self.group or ''} {processes_csv}"
 
     @classmethod
-    def deserialize(cls, params: str, db_nodes: List[str],
-                    extra_nodes: List[str],
-                    load_node: Optional[str] = None,
-                    dc_map: Optional[Dict[str, List[str]]] = None) -> 'FreezeProcessesGroupAction':
+    def deserialize(
+        cls,
+        params: str,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ) -> "FreezeProcessesGroupAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         group = parts[1] if len(parts) > 1 else None
-        processes = parts[2].split(',') if len(parts) > 2 and parts[2] else ["postgres"]
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node,
-                   dc_map=dc_map, group=group, processes=processes)
+        processes = parts[2].split(",") if len(parts) > 2 and parts[2] else ["postgres"]
+        return cls(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            group=group,
+            processes=processes,
+        )
 
 
 # ---- Registry factory ----

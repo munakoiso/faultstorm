@@ -11,10 +11,10 @@ that time the operation is logged as indeterminate (INFO).
 """
 
 import json
-import time
 import logging
 import threading
-from typing import Optional, IO
+import time
+from typing import IO, Any, Callable, Optional
 
 from faultstorm.config import TestConfig
 from faultstorm.db_client import DatabaseClient
@@ -76,8 +76,7 @@ class LoadGenerator:
             self._node_index += 1
         return node
 
-    def _log_event(self, log_file: IO, event_type: str, action: str,
-                   **kwargs: object) -> None:
+    def _log_event(self, log_file: IO[str], event_type: str, action: str, **kwargs: object) -> None:
         """Write a JSON event to the operations log (thread-safe).
 
         Args:
@@ -93,11 +92,11 @@ class LoadGenerator:
             **kwargs,
         }
         with self._log_lock:
-            log_file.write(json.dumps(event) + '\n')
+            log_file.write(json.dumps(event) + "\n")
             log_file.flush()
 
     @staticmethod
-    def _run_with_timeout(fn, timeout_sec: float):  # type: ignore[type-arg]
+    def _run_with_timeout(fn: Callable[[], Any], timeout_sec: float) -> Any:
         """Run a function with an application-side timeout.
 
         Starts *fn* in a daemon thread and waits up to *timeout_sec*
@@ -117,14 +116,14 @@ class LoadGenerator:
             TimeoutError: If *fn* did not complete in time
             Exception: Any exception raised by *fn*
         """
-        result_holder: dict = {}
+        result_holder: dict[str, Any] = {}
         done_event = threading.Event()
 
-        def wrapper():
+        def wrapper() -> None:
             try:
-                result_holder['result'] = fn()
+                result_holder["result"] = fn()
             except Exception as exc:
-                result_holder['error'] = exc
+                result_holder["error"] = exc
             finally:
                 done_event.set()
 
@@ -134,9 +133,9 @@ class LoadGenerator:
         if not done_event.wait(timeout=timeout_sec):
             raise TimeoutError(f"Operation timed out after {timeout_sec}s")
 
-        if 'error' in result_holder:
-            raise result_holder['error']
-        return result_holder.get('result')
+        if "error" in result_holder:
+            raise result_holder["error"]
+        return result_holder.get("result")
 
     def setup(self) -> None:
         """Set up the test table.
@@ -151,12 +150,9 @@ class LoadGenerator:
                 return
             except Exception as e:
                 logger.debug("Setup on %s failed: %s", node, e)
-        raise RuntimeError(
-            f"Failed to set up test table on any node: {nodes}"
-        )
+        raise RuntimeError(f"Failed to set up test table on any node: {nodes}")
 
-    def add(self, value: int, log_file: IO,
-            node: Optional[str] = None) -> bool:
+    def add(self, value: int, log_file: IO[str], node: Optional[str] = None) -> bool:
         """Add value to set table with application-side timeout.
 
         Logs INVOKE before attempting, then OK/FAIL/INFO based on result.
@@ -180,19 +176,16 @@ class LoadGenerator:
             self._log_event(log_file, OK, "add", value=value, node=node)
             return True
         except TimeoutError:
-            self._log_event(log_file, INFO, "add", value=value,
-                            node=node, error="timeout")
+            self._log_event(log_file, INFO, "add", value=value, node=node, error="timeout")
             return False
         except Exception as e:
             if self.db_client.is_definite_failure(e):
-                self._log_event(log_file, FAIL, "add", value=value,
-                                node=node, error=str(e))
+                self._log_event(log_file, FAIL, "add", value=value, node=node, error=str(e))
             else:
-                self._log_event(log_file, INFO, "add", value=value,
-                                node=node, error=str(e))
+                self._log_event(log_file, INFO, "add", value=value, node=node, error=str(e))
             return False
 
-    def read(self, log_file: IO) -> Optional[set]:
+    def read(self, log_file: IO[str]) -> Optional[set[int]]:
         """Read all values from set table with application-side timeout.
 
         Args:
@@ -204,24 +197,20 @@ class LoadGenerator:
         node = self._get_next_node()
         self._log_event(log_file, INVOKE, "read", node=node)
         try:
-            values = self._run_with_timeout(
+            values: set[int] = self._run_with_timeout(
                 lambda: self.db_client.read(node),
                 self.config.operation_timeout,
             )
-            self._log_event(log_file, OK, "read",
-                            value=sorted(values), node=node)
+            self._log_event(log_file, OK, "read", value=sorted(values), node=node)
             return values
         except TimeoutError:
-            self._log_event(log_file, FAIL, "read",
-                            node=node, error="timeout")
+            self._log_event(log_file, FAIL, "read", node=node, error="timeout")
             return None
         except Exception as e:
-            self._log_event(log_file, FAIL, "read",
-                            node=node, error=str(e))
+            self._log_event(log_file, FAIL, "read", node=node, error=str(e))
             return None
 
-    def _writer_loop(self, node: str, log_file: IO,
-                     done: threading.Event) -> None:
+    def _writer_loop(self, node: str, log_file: IO[str], done: threading.Event) -> None:
         """Write loop for a single writer thread.
 
         Continuously writes sequential values to the given node until
@@ -238,7 +227,7 @@ class LoadGenerator:
             if done.wait(self.config.add_interval):
                 break
 
-    def run_write_phase(self, duration: int, log_file: IO) -> None:
+    def run_write_phase(self, duration: int, log_file: IO[str]) -> None:
         """Run parallel writers for the specified duration.
 
         Spawns ``writers_per_node`` writer threads per DB node.  Each
@@ -266,7 +255,9 @@ class LoadGenerator:
         total = len(threads)
         logger.info(
             "Started %d parallel writers (%d per node, %d nodes)",
-            total, self.config.writers_per_node, len(nodes),
+            total,
+            self.config.writers_per_node,
+            len(nodes),
         )
 
         # Block until duration expires or stop() is called externally
@@ -278,7 +269,7 @@ class LoadGenerator:
 
         logger.info("All writers stopped")
 
-    def run_read_phase(self, duration: int, log_file: IO) -> None:
+    def run_read_phase(self, duration: int, log_file: IO[str]) -> None:
         """Run the read phase for the specified duration.
 
         Reads from all nodes with read_interval delay.

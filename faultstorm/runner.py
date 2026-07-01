@@ -5,18 +5,18 @@ This is the main API for running fault-injection tests. It is database-agnostic
 and works with any DatabaseClient implementation.
 """
 
-import os
 import logging
+import os
 import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from faultstorm.checker import check_consistency
 from faultstorm.config import TestConfig
 from faultstorm.db_client import DatabaseClient
-from faultstorm.load_generator import LoadGenerator
-from faultstorm.faults.engine import FaultEngine
 from faultstorm.faults.actions import FaultRegistry
-from faultstorm.checker import check_consistency
+from faultstorm.faults.engine import FaultEngine
+from faultstorm.load_generator import LoadGenerator
 from faultstorm.model import CheckResult
 
 logger = logging.getLogger(__name__)
@@ -29,9 +29,13 @@ class TestRunner:
     to execute a complete test cycle: setup → write+faults → read → check.
     """
 
-    def __init__(self, config: TestConfig, db_client: DatabaseClient,
-                 fault_registry: FaultRegistry,
-                 dc_map: Optional[Dict[str, List[str]]] = None):
+    def __init__(
+        self,
+        config: TestConfig,
+        db_client: DatabaseClient,
+        fault_registry: FaultRegistry,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+    ):
         """Initialize test runner.
 
         Args:
@@ -64,32 +68,29 @@ class TestRunner:
         if self.config.replay_scenario:
             logger.info("Replay mode: %s", self.config.replay_scenario)
         else:
-            logger.info("Random fault mode, scenario log: %s",
-                        self.config.scenario_log)
+            logger.info("Random fault mode, scenario log: %s", self.config.scenario_log)
 
-        with open(self.config.operations_log, 'w') as ops_log:
+        with open(self.config.operations_log, "w") as ops_log:
 
             load_gen = LoadGenerator(self.config, self.db_client)
-            engine = FaultEngine(self.config, self.fault_registry,
-                                 dc_map=self.dc_map)
+            engine = FaultEngine(self.config, self.fault_registry, dc_map=self.dc_map)
 
             # Setup
             logger.info("Setting up test table...")
             load_gen.setup()
 
             # Phase 1: Write + Faults
-            logger.info("Phase 1: Write + Faults started at %s",
-                        datetime.now().isoformat())
+            logger.info("Phase 1: Write + Faults started at %s", datetime.now().isoformat())
 
             if self.config.replay_scenario:
                 fault_thread = threading.Thread(
                     target=engine.run_replay,
-                    args=(self.config.replay_scenario, self.config.scenario_log)
+                    args=(self.config.replay_scenario, self.config.scenario_log),
                 )
             else:
                 fault_thread = threading.Thread(
                     target=engine.run_random,
-                    args=(self.config.write_phase_duration, self.config.scenario_log)
+                    args=(self.config.write_phase_duration, self.config.scenario_log),
                 )
             fault_thread.start()
 
@@ -102,8 +103,7 @@ class TestRunner:
             logger.info("Phase 1 completed")
 
             # Phase 2: Read validation
-            logger.info("Phase 2: Read validation started at %s",
-                        datetime.now().isoformat())
+            logger.info("Phase 2: Read validation started at %s", datetime.now().isoformat())
 
             load_gen.run_read_phase(self.config.read_phase_duration, ops_log)
             load_gen.stop()
@@ -134,8 +134,10 @@ class TestRunner:
         print(f"Write availability: {result.write_availability:.2%}")
 
         if result.recovered:
-            print(f"Recovered values (indeterminate writes that went through): "
-                  f"{len(result.recovered)}")
+            print(
+                f"Recovered values (indeterminate writes that went through): "
+                f"{len(result.recovered)}"
+            )
             if len(result.recovered) < 20:
                 print(f"  {sorted(result.recovered)}")
 
@@ -159,7 +161,7 @@ class TestRunner:
             print("\nScenario Log:")
             print("-" * 60)
             try:
-                with open(self.config.scenario_log, 'r') as f:
+                with open(self.config.scenario_log, "r") as f:
                     print(f.read())
             except FileNotFoundError:
                 print("(scenario log not found)")

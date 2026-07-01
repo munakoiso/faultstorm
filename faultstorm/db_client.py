@@ -8,7 +8,7 @@ DatabaseClient and implement the abstract methods.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Set, List
+from typing import List, Set
 
 logger = logging.getLogger(__name__)
 
