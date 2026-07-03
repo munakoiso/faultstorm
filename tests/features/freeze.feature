@@ -40,3 +40,19 @@ Feature: FreezeProcessesAction
     Given a freeze action with ordinal 5, node "faultstorm_node2" and processes "postgres,pgconsul"
     When I serialize and deserialize the freeze action
     Then the deserialized freeze action has ordinal 5, node "faultstorm_node2" and processes "postgres,pgconsul"
+    And the deserialized freeze action has freeze range 100-3000 and pause range 100-3000
+
+  Scenario: Freeze action serialization round-trip with custom ranges
+    Given a freeze action with ordinal 3, node "faultstorm_node1", processes "postgres", freeze range 50-500 and pause range 200-2000
+    When I serialize and deserialize the freeze action
+    Then the deserialized freeze action has ordinal 3, node "faultstorm_node1" and processes "postgres"
+    And the deserialized freeze action has freeze range 50-500 and pause range 200-2000
+
+  Scenario: Freeze action writes config section to flag file
+    When I execute a freeze action for processes "sleep" on node "faultstorm_node1"
+    Then the freeze flag file exists on node "faultstorm_node1"
+    And the freeze flag file contains "[config]" on node "faultstorm_node1"
+    And the freeze flag file contains "freeze_min_ms=" on node "faultstorm_node1"
+    And the freeze flag file contains "[patterns]" on node "faultstorm_node1"
+    And the freeze flag file contains "sleep" on node "faultstorm_node1"
+    When I heal the freeze action

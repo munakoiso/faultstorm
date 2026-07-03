@@ -23,7 +23,7 @@ import random
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 from faultstorm.cluster import ClusterManager
 from faultstorm.faults import partitioners
@@ -811,30 +811,126 @@ class PartitionRandomDcAction(FaultAction):
         )
 
 
-class FreezeProcessesAction(FaultAction):
-    """Freeze random processes on a single node via SIGSTOP/SIGCONT.
+class BaseFreezeAction(FaultAction):
+    """Base class for freeze actions that use SIGSTOP/SIGCONT via process_freezer.sh.
 
-    Creates a flag file on the target node that activates the
-    ``process_freezer.sh`` daemon (which must be running as a service).
-    The flag file contains process name patterns (one per line).
-    The daemon picks a random matching PID, sends SIGSTOP, waits
-    0.1–3 seconds, sends SIGCONT, and repeats.
+    Provides shared infrastructure for writing/removing the flag file,
+    building its content (``[config]`` + ``[patterns]`` sections), and
+    managing the ``freeze_duration_range`` / ``freeze_pause_range``
+    timing parameters.
 
-    Healing removes the flag file, which causes the daemon to stop
-    the freeze loop.
-
-    Serialized format: ``<ordinal> <node> <processes_csv>``
+    Subclasses must implement ``_resolve_targets()`` to decide which
+    nodes to freeze, plus ``serialize()`` / ``deserialize()`` for their
+    specific serialization format.
     """
 
-    name = "freeze_processes"
     healable = True
-    host_targetable = True
 
     #: Default flag file path on target nodes.
     FLAG_FILE = "/tmp/.process_freezer.flag"
 
     #: Default log file path on target nodes.
     LOG_FILE = "/var/log/process_freezer.log"
+
+    #: Default freeze (SIGSTOP hold) duration range in ms.
+    DEFAULT_FREEZE_RANGE: Tuple[int, int] = (100, 3000)
+
+    #: Default pause (between cycles) duration range in ms.
+    DEFAULT_PAUSE_RANGE: Tuple[int, int] = (100, 3000)
+
+    def __init__(
+        self,
+        db_nodes: List[str],
+        extra_nodes: List[str],
+        ordinal: int = 0,
+        load_node: Optional[str] = None,
+        dc_map: Optional[Dict[str, List[str]]] = None,
+        processes: Optional[List[str]] = None,
+        freeze_duration_range: Optional[Tuple[int, int]] = None,
+        freeze_pause_range: Optional[Tuple[int, int]] = None,
+    ):
+        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        self.processes = processes or ["postgres"]
+        self.freeze_duration_range = freeze_duration_range or self.DEFAULT_FREEZE_RANGE
+        self.freeze_pause_range = freeze_pause_range or self.DEFAULT_PAUSE_RANGE
+
+    # ---- shared helpers ----
+
+    @abstractmethod
+    def _resolve_targets(self) -> List[str]:
+        """Determine and return the list of target nodes.
+
+        May have side effects (e.g. setting ``self.node`` or
+        ``self.group`` when randomly choosing). Returns an empty list
+        if there are no valid targets.
+        """
+
+    def _build_flag_content(self) -> str:
+        """Build flag file content with config and patterns sections."""
+        lines = [
+            "[config]",
+            f"freeze_min_ms={self.freeze_duration_range[0]}",
+            f"freeze_max_ms={self.freeze_duration_range[1]}",
+            f"pause_min_ms={self.freeze_pause_range[0]}",
+            f"pause_max_ms={self.freeze_pause_range[1]}",
+            "[patterns]",
+        ]
+        lines.extend(self.processes)
+        return "\n".join(lines)
+
+    def _write_flag_to_nodes(self, targets: List[str]) -> None:
+        """Write the flag file to every node in *targets*."""
+        content = self._build_flag_content()
+        for node in targets:
+            try:
+                ClusterManager.exec_on_node(
+                    node,
+                    [
+                        "bash",
+                        "-c",
+                        f"cat > {self.FLAG_FILE} << 'FREEZER_EOF'\n{content}\nFREEZER_EOF",
+                    ],
+                    timeout=10,
+                )
+            except Exception as e:
+                logger.warning("Freeze on %s failed: %s", node, e)
+
+    def _remove_flag_from_nodes(self, targets: List[str]) -> None:
+        """Remove the flag file from every node in *targets*."""
+        for node in targets:
+            try:
+                ClusterManager.exec_on_node(
+                    node,
+                    ["rm", "-f", self.FLAG_FILE],
+                    timeout=10,
+                )
+            except Exception as e:
+                logger.warning("Heal freeze on %s failed: %s", node, e)
+
+    @staticmethod
+    def _serialize_range(rng: Tuple[int, int]) -> str:
+        """Serialize a ``(min, max)`` range to ``'min-max'``."""
+        return f"{rng[0]}-{rng[1]}"
+
+    @staticmethod
+    def _deserialize_range(token: str) -> Tuple[int, int]:
+        """Deserialize ``'min-max'`` into ``(min, max)``."""
+        lo, hi = token.split("-")
+        return (int(lo), int(hi))
+
+
+class FreezeProcessesAction(BaseFreezeAction):
+    """Freeze random processes on a single node via SIGSTOP/SIGCONT.
+
+    Creates a flag file on the target node that activates the
+    ``process_freezer.sh`` daemon (which must be running as a service).
+
+    Serialized format:
+        ``<ordinal> <node> <processes_csv> <fmin>-<fmax> <pmin>-<pmax>``
+    """
+
+    name = "freeze_processes"
+    host_targetable = True
 
     def __init__(
         self,
@@ -845,6 +941,8 @@ class FreezeProcessesAction(FaultAction):
         dc_map: Optional[Dict[str, List[str]]] = None,
         node: Optional[str] = None,
         processes: Optional[List[str]] = None,
+        freeze_duration_range: Optional[Tuple[int, int]] = None,
+        freeze_pause_range: Optional[Tuple[int, int]] = None,
     ):
         """Initialize.
 
@@ -857,40 +955,49 @@ class FreezeProcessesAction(FaultAction):
             node: Specific node to target (None = pick random DB node)
             processes: Process name patterns to freeze.
                        Defaults to ["postgres"].
+            freeze_duration_range: (min_ms, max_ms) for SIGSTOP hold duration.
+                                   Defaults to (100, 3000).
+            freeze_pause_range: (min_ms, max_ms) for pause between freeze cycles.
+                                Defaults to (100, 3000).
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            processes=processes,
+            freeze_duration_range=freeze_duration_range,
+            freeze_pause_range=freeze_pause_range,
+        )
         self.node = node
-        self.processes = processes or ["postgres"]
 
-    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+    def _resolve_targets(self) -> List[str]:
         if self.node is None:
             self.node = random.choice(self.db_nodes)
-        patterns = "\n".join(self.processes)
-        logger.info("Freeze processes on %s: patterns=%s", self.node, self.processes)
-        try:
-            ClusterManager.exec_on_node(
-                self.node,
-                ["bash", "-c", f"echo '{patterns}' > {self.FLAG_FILE}"],
-                timeout=10,
-            )
-        except Exception as e:
-            logger.warning("Freeze on %s failed: %s", self.node, e)
+        return [self.node]
+
+    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+        targets = self._resolve_targets()
+        logger.info(
+            "Freeze processes on %s: patterns=%s freeze=%s pause=%s",
+            self.node,
+            self.processes,
+            self.freeze_duration_range,
+            self.freeze_pause_range,
+        )
+        self._write_flag_to_nodes(targets)
 
     def heal(self) -> None:
+        assert self.node is not None, "Cannot heal: node was never set"
         logger.info("Healing freeze on %s", self.node)
-        try:
-            assert self.node is not None, "Cannot heal: node was never set"
-            ClusterManager.exec_on_node(
-                self.node,
-                ["rm", "-f", self.FLAG_FILE],
-                timeout=10,
-            )
-        except Exception as e:
-            logger.warning("Heal freeze on %s failed: %s", self.node, e)
+        self._remove_flag_from_nodes([self.node])
 
     def serialize(self) -> str:
         processes_csv = ",".join(self.processes)
-        return f"{self.ordinal} {self.node or ''} {processes_csv}"
+        freeze_range = self._serialize_range(self.freeze_duration_range)
+        pause_range = self._serialize_range(self.freeze_pause_range)
+        return f"{self.ordinal} {self.node or ''} {processes_csv} {freeze_range} {pause_range}"
 
     @classmethod
     def deserialize(
@@ -905,6 +1012,12 @@ class FreezeProcessesAction(FaultAction):
         ordinal = int(parts[0])
         node = parts[1] if len(parts) > 1 else None
         processes = parts[2].split(",") if len(parts) > 2 and parts[2] else ["postgres"]
+        freeze_duration_range: Optional[Tuple[int, int]] = None
+        freeze_pause_range: Optional[Tuple[int, int]] = None
+        if len(parts) > 3:
+            freeze_duration_range = cls._deserialize_range(parts[3])
+        if len(parts) > 4:
+            freeze_pause_range = cls._deserialize_range(parts[4])
         return cls(
             db_nodes,
             extra_nodes,
@@ -913,27 +1026,22 @@ class FreezeProcessesAction(FaultAction):
             dc_map=dc_map,
             node=node,
             processes=processes,
+            freeze_duration_range=freeze_duration_range,
+            freeze_pause_range=freeze_pause_range,
         )
 
 
-class FreezeProcessesGroupAction(FaultAction):
+class FreezeProcessesGroupAction(BaseFreezeAction):
     """Freeze random processes on an entire node group simultaneously.
 
     Randomly picks a node group (``db`` or ``extra``) and creates the
-    flag file on every node in that group at once. This simulates
-    system-wide slowdowns affecting all instances of one role (e.g.
-    all database nodes or all ZooKeeper nodes).
+    flag file on every node in that group at once.
 
-    Serialized format: ``<ordinal> <group> <processes_csv>``
-
-    Where ``group`` is ``db`` or ``extra``.
+    Serialized format:
+        ``<ordinal> <group> <processes_csv> <fmin>-<fmax> <pmin>-<pmax>``
     """
 
     name = "freeze_processes_group"
-    healable = True
-
-    #: Default flag file path on target nodes.
-    FLAG_FILE = "/tmp/.process_freezer.flag"
 
     # Group constants
     GROUP_DB = "db"
@@ -949,6 +1057,8 @@ class FreezeProcessesGroupAction(FaultAction):
         dc_map: Optional[Dict[str, List[str]]] = None,
         group: Optional[str] = None,
         processes: Optional[List[str]] = None,
+        freeze_duration_range: Optional[Tuple[int, int]] = None,
+        freeze_pause_range: Optional[Tuple[int, int]] = None,
     ):
         """Initialize.
 
@@ -962,10 +1072,22 @@ class FreezeProcessesGroupAction(FaultAction):
                    None = pick randomly on execute.
             processes: Process name patterns to freeze.
                        Defaults to ["postgres"].
+            freeze_duration_range: (min_ms, max_ms) for SIGSTOP hold duration.
+                                   Defaults to (100, 3000).
+            freeze_pause_range: (min_ms, max_ms) for pause between freeze cycles.
+                                Defaults to (100, 3000).
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(
+            db_nodes,
+            extra_nodes,
+            ordinal,
+            load_node=load_node,
+            dc_map=dc_map,
+            processes=processes,
+            freeze_duration_range=freeze_duration_range,
+            freeze_pause_range=freeze_pause_range,
+        )
         self.group = group
-        self.processes = processes or ["postgres"]
 
     def _target_nodes(self) -> List[str]:
         """Return the list of nodes for the chosen group."""
@@ -973,9 +1095,8 @@ class FreezeProcessesGroupAction(FaultAction):
             return list(self.extra_nodes)
         return list(self.db_nodes)
 
-    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+    def _resolve_targets(self) -> List[str]:
         if self.group is None:
-            # Only pick from groups that have nodes
             candidates = [
                 g
                 for g in self.GROUPS
@@ -984,40 +1105,34 @@ class FreezeProcessesGroupAction(FaultAction):
             ]
             if not candidates:
                 logger.warning("freeze_processes_group: no nodes available")
-                return
+                return []
             self.group = random.choice(candidates)
+        return self._target_nodes()
 
-        targets = self._target_nodes()
-        patterns = "\n".join(self.processes)
+    def execute(self, stop_event: Optional[threading.Event] = None) -> None:
+        targets = self._resolve_targets()
+        if not targets:
+            return
         logger.info(
-            "Freeze processes on %s group (%s): patterns=%s", self.group, targets, self.processes
+            "Freeze processes on %s group (%s): patterns=%s freeze=%s pause=%s",
+            self.group,
+            targets,
+            self.processes,
+            self.freeze_duration_range,
+            self.freeze_pause_range,
         )
-        for node in targets:
-            try:
-                ClusterManager.exec_on_node(
-                    node,
-                    ["bash", "-c", f"echo '{patterns}' > {self.FLAG_FILE}"],
-                    timeout=10,
-                )
-            except Exception as e:
-                logger.warning("Freeze on %s failed: %s", node, e)
+        self._write_flag_to_nodes(targets)
 
     def heal(self) -> None:
         targets = self._target_nodes()
         logger.info("Healing freeze on %s group (%s)", self.group, targets)
-        for node in targets:
-            try:
-                ClusterManager.exec_on_node(
-                    node,
-                    ["rm", "-f", self.FLAG_FILE],
-                    timeout=10,
-                )
-            except Exception as e:
-                logger.warning("Heal freeze on %s failed: %s", node, e)
+        self._remove_flag_from_nodes(targets)
 
     def serialize(self) -> str:
         processes_csv = ",".join(self.processes)
-        return f"{self.ordinal} {self.group or ''} {processes_csv}"
+        freeze_range = self._serialize_range(self.freeze_duration_range)
+        pause_range = self._serialize_range(self.freeze_pause_range)
+        return f"{self.ordinal} {self.group or ''} {processes_csv} {freeze_range} {pause_range}"
 
     @classmethod
     def deserialize(
@@ -1032,6 +1147,12 @@ class FreezeProcessesGroupAction(FaultAction):
         ordinal = int(parts[0])
         group = parts[1] if len(parts) > 1 else None
         processes = parts[2].split(",") if len(parts) > 2 and parts[2] else ["postgres"]
+        freeze_duration_range: Optional[Tuple[int, int]] = None
+        freeze_pause_range: Optional[Tuple[int, int]] = None
+        if len(parts) > 3:
+            freeze_duration_range = cls._deserialize_range(parts[3])
+        if len(parts) > 4:
+            freeze_pause_range = cls._deserialize_range(parts[4])
         return cls(
             db_nodes,
             extra_nodes,
@@ -1040,6 +1161,8 @@ class FreezeProcessesGroupAction(FaultAction):
             dc_map=dc_map,
             group=group,
             processes=processes,
+            freeze_duration_range=freeze_duration_range,
+            freeze_pause_range=freeze_pause_range,
         )
 
 

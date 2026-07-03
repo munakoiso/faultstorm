@@ -3,7 +3,8 @@ version: "3.8"
 services:
   node1:
     build:
-      context: docker
+      context: ..
+      dockerfile: tests/docker/Dockerfile
     container_name: faultstorm_node1
     hostname: node1
     cap_add:
@@ -13,7 +14,8 @@ services:
 
   node2:
     build:
-      context: docker
+      context: ..
+      dockerfile: tests/docker/Dockerfile
     container_name: faultstorm_node2
     hostname: node2
     cap_add:
@@ -23,7 +25,8 @@ services:
 
   node3:
     build:
-      context: docker
+      context: ..
+      dockerfile: tests/docker/Dockerfile
     container_name: faultstorm_node3
     hostname: node3
     cap_add:
@@ -33,7 +36,8 @@ services:
 
   extra1:
     build:
-      context: docker
+      context: ..
+      dockerfile: tests/docker/Dockerfile
     container_name: faultstorm_extra1
     hostname: extra1
     cap_add:
@@ -43,7 +47,8 @@ services:
 
   extra2:
     build:
-      context: docker
+      context: ..
+      dockerfile: tests/docker/Dockerfile
     container_name: faultstorm_extra2
     hostname: extra2
     cap_add:
@@ -53,7 +58,8 @@ services:
 
   loadnode:
     build:
-      context: docker
+      context: ..
+      dockerfile: tests/docker/Dockerfile
     container_name: faultstorm_loadnode
     hostname: loadnode
     cap_add:

@@ -191,6 +191,17 @@ def step_given_freeze(context, ordinal, node, processes):
     )
 
 
+@given('a freeze action with ordinal {ordinal:d}, node "{node}", processes "{processes}", freeze range {fmin:d}-{fmax:d} and pause range {pmin:d}-{pmax:d}')
+def step_given_freeze_with_ranges(context, ordinal, node, processes, fmin, fmax, pmin, pmax):
+    proc_list = processes.split(',')
+    context.freeze_action = FreezeProcessesAction(
+        context.db_nodes, context.extra_nodes, ordinal=ordinal,
+        node=node, processes=proc_list,
+        freeze_duration_range=(fmin, fmax),
+        freeze_pause_range=(pmin, pmax),
+    )
+
+
 @when('I serialize and deserialize the freeze action')
 def step_serde_freeze(context):
     serialized = context.freeze_action.serialize()
@@ -211,6 +222,19 @@ def step_check_serde_freeze(context, ordinal, node, processes):
     )
     assert action.processes == proc_list, (
         f"Expected processes {proc_list}, got {action.processes}"
+    )
+
+
+@then('the deserialized freeze action has freeze range {fmin:d}-{fmax:d} and pause range {pmin:d}-{pmax:d}')
+def step_check_serde_freeze_ranges(context, fmin, fmax, pmin, pmax):
+    action = context.deserialized
+    assert action.freeze_duration_range == (fmin, fmax), (
+        f"Expected freeze_duration_range ({fmin}, {fmax}), "
+        f"got {action.freeze_duration_range}"
+    )
+    assert action.freeze_pause_range == (pmin, pmax), (
+        f"Expected freeze_pause_range ({pmin}, {pmax}), "
+        f"got {action.freeze_pause_range}"
     )
 
 
@@ -301,6 +325,17 @@ def step_given_group_freeze(context, ordinal, group, processes):
     )
 
 
+@given('a group freeze action with ordinal {ordinal:d}, group "{group}", processes "{processes}", freeze range {fmin:d}-{fmax:d} and pause range {pmin:d}-{pmax:d}')
+def step_given_group_freeze_with_ranges(context, ordinal, group, processes, fmin, fmax, pmin, pmax):
+    proc_list = processes.split(',')
+    context.group_freeze_action = FreezeProcessesGroupAction(
+        context.db_nodes, context.extra_nodes, ordinal=ordinal,
+        group=group, processes=proc_list,
+        freeze_duration_range=(fmin, fmax),
+        freeze_pause_range=(pmin, pmax),
+    )
+
+
 @when('I serialize and deserialize the group freeze action')
 def step_serde_group_freeze(context):
     serialized = context.group_freeze_action.serialize()
@@ -321,4 +356,17 @@ def step_check_serde_group_freeze(context, ordinal, group, processes):
     )
     assert action.processes == proc_list, (
         f"Expected processes {proc_list}, got {action.processes}"
+    )
+
+
+@then('the deserialized group freeze action has freeze range {fmin:d}-{fmax:d} and pause range {pmin:d}-{pmax:d}')
+def step_check_serde_group_freeze_ranges(context, fmin, fmax, pmin, pmax):
+    action = context.deserialized_group
+    assert action.freeze_duration_range == (fmin, fmax), (
+        f"Expected freeze_duration_range ({fmin}, {fmax}), "
+        f"got {action.freeze_duration_range}"
+    )
+    assert action.freeze_pause_range == (pmin, pmax), (
+        f"Expected freeze_pause_range ({pmin}, {pmax}), "
+        f"got {action.freeze_pause_range}"
     )

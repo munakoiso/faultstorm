@@ -9,7 +9,7 @@ RUN apk add --no-cache \
     procps
 
 # Install process_freezer script from faultstorm package
-COPY process_freezer.sh /usr/local/bin/process_freezer.sh
+COPY faultstorm/scripts/process_freezer.sh /usr/local/bin/process_freezer.sh
 RUN chmod +x /usr/local/bin/process_freezer.sh
 
 # Keep container alive; test processes are started from behave steps

@@ -28,3 +28,10 @@ Feature: FreezeProcessesGroupAction
     Given a group freeze action with ordinal 7, group "extra" and processes "postgres,java"
     When I serialize and deserialize the group freeze action
     Then the deserialized group freeze action has ordinal 7, group "extra" and processes "postgres,java"
+    And the deserialized group freeze action has freeze range 100-3000 and pause range 100-3000
+
+  Scenario: Group freeze serialization round-trip with custom ranges
+    Given a group freeze action with ordinal 4, group "db", processes "postgres", freeze range 50-500 and pause range 200-2000
+    When I serialize and deserialize the group freeze action
+    Then the deserialized group freeze action has ordinal 4, group "db" and processes "postgres"
+    And the deserialized group freeze action has freeze range 50-500 and pause range 200-2000
