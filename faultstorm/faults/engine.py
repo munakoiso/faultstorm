@@ -56,8 +56,13 @@ def _timestamp() -> str:
 class FaultEngine:
     """Engine for injecting failures into the cluster.
 
-    Maintains a list of active (healable) faults and a sequential ordinal
-    counter. Supports two modes:
+    Maintains a list of all active faults (both healable and
+    fire-and-forget) and a sequential ordinal counter.  During the
+    heal phase, ``heal()`` is called on every tracked action —
+    non-healable actions have a no-op ``heal()`` but are still tracked
+    so that ``_destructive_count`` is properly decremented.
+
+    Supports two modes:
       - run_random(): random faults with heal cycles
       - run_replay(): deterministic replay from a scenario log
     """
@@ -351,8 +356,7 @@ class FaultEngine:
                 self._destructive_count += 1
 
             self._log_and_execute(action)
-            if action.healable:
-                self._active_faults.append(action)
+            self._active_faults.append(action)
 
             # Random wait between component faults (not after the last)
             if i < fault_count - 1:
@@ -376,24 +380,29 @@ class FaultEngine:
             logger.error("Action %s failed: %s", action.name, e)
 
     def _heal_all_active(self) -> None:
-        """Heal all currently active faults in random order with random waits."""
+        """Heal all currently active faults in random order.
+
+        Random waits are inserted only after healable actions (those
+        that actually perform cleanup like removing iptables rules).
+        Non-healable (fire-and-forget) actions call the no-op
+        ``heal()`` and are processed immediately without extra delays.
+        """
         faults = list(self._active_faults)
         random.shuffle(faults)
 
         min_wait = self.config.complex_fault_min_wait
         max_wait = self.config.complex_fault_max_wait
 
-        for i, action in enumerate(faults):
+        for action in faults:
             try:
                 action.heal()
                 if action.destructive:
                     self._destructive_count -= 1
             except Exception as e:
                 logger.error("Heal %s ordinal=%d failed: %s", action.name, action.ordinal, e)
-            self._write_action(action, healing=True)
 
-            # Random wait between heals (not after the last)
-            if i < len(faults) - 1:
+            if action.healable:
+                self._write_action(action, healing=True)
                 wait_sec = random.randint(min_wait, max_wait)
                 wait = WaitAction(
                     self.config.db_nodes,

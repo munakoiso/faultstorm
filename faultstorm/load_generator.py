@@ -104,6 +104,11 @@ class LoadGenerator:
         in time, ``TimeoutError`` is raised and the background thread
         is abandoned (daemon, so it won't block process exit).
 
+        The abandoned thread is not killed — it will eventually
+        terminate on its own once the underlying operation completes
+        or its own timeout fires (e.g. ``statement_timeout`` on the
+        database side).  Callers must ensure that *fn* cannot block
+        indefinitely.
 
         Args:
             fn: Callable to execute
@@ -156,6 +161,11 @@ class LoadGenerator:
         """Add value to set table with application-side timeout.
 
         Logs INVOKE before attempting, then OK/FAIL/INFO based on result.
+        On timeout the daemon thread is abandoned but **not** killed.
+        The ``DatabaseClient`` implementation must guarantee that the
+        underlying operation cannot block indefinitely (e.g. by setting
+        ``statement_timeout`` on the database connection) so the
+        abandoned thread eventually terminates on its own.
 
         Args:
             value: Integer value to insert
@@ -187,6 +197,12 @@ class LoadGenerator:
 
     def read(self, log_file: IO[str]) -> Optional[set[int]]:
         """Read all values from set table with application-side timeout.
+
+        On timeout the daemon thread is abandoned but **not** killed.
+        The ``DatabaseClient`` implementation must guarantee that the
+        underlying operation cannot block indefinitely (e.g. by setting
+        ``statement_timeout`` on the database connection) so the
+        abandoned thread eventually terminates on its own.
 
         Args:
             log_file: Operations log file

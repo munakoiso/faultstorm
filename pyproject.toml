@@ -9,11 +9,12 @@ description = "Fault-injection testing framework for distributed databases"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
-dependencies = [
-    "psycopg2-binary",
-]
+dependencies = []
 
 [project.optional-dependencies]
+postgres = [
+    "psycopg2-binary",
+]
 dev = [
     "mypy",
     "pytest",

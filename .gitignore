@@ -37,6 +37,9 @@ dmypy.json
 operations.log
 scenario.log
 
+# Generated scripts (copied by Makefile test-build from faultstorm/scripts/)
+tests/docker/process_freezer.sh
+
 # OS
 .DS_Store
 Thumbs.db

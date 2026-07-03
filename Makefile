@@ -1,14 +1,15 @@
-.PHONY: help check lint lint-fix mypy test clean install-dev venv activate test-up test-down test-build
+.PHONY: help check lint lint-fix mypy test clean install-dev venv activate test-up test-down test-build test-behave
 
 help:
 	@echo "Available targets:"
 	@echo "  make venv           - Create virtual environment"
 	@echo "  make activate       - Show command to activate virtual environment"
-	@echo "  make check         - Set up venv, install deps, run all checks (lint + mypy)"
+	@echo "  make check         - Set up venv, install deps, run all checks (lint + mypy + behave tests)"
 	@echo "  make lint          - Run linters (flake8, isort, black --check)"
 	@echo "  make lint-fix      - Fix linting issues (isort, black)"
 	@echo "  make mypy          - Run mypy type checker"
-	@echo "  make test          - Run tests with pytest"
+	@echo "  make test          - Run behave tests (alias for test-behave)"
+	@echo "  make test-behave   - Run behave tests (builds Docker containers automatically)"
 	@echo "  make clean         - Clean up temporary files"
 	@echo "  make install-dev   - Install development dependencies"
 
@@ -32,7 +33,7 @@ activate:
 	@echo "Run the following command to activate the virtual environment:"
 	@echo "  $(ACTIVATE)"
 
-check: venv install-dev lint mypy
+check: venv install-dev lint mypy test-behave
 
 lint:
 	@echo "Running flake8..."
@@ -84,8 +85,11 @@ test-down:
 	PATH="/opt/homebrew/bin:/usr/local/bin:$$PATH" docker compose -f $(COMPOSE_FILE) down -v --remove-orphans
 
 # Run behave tests (containers are managed by environment.py)
-test:
+test-behave:
 	cd tests && PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m behave $(BEHAVE_ARGS)
+
+# Alias kept for convenience
+test: test-behave
 
 # Run a specific feature
 test-feature:

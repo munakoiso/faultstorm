@@ -93,6 +93,10 @@ def check_consistency(operations_log: str) -> CheckResult:
         elif action == "read":
             if op_type == OK:
                 if isinstance(value, list):
+                    # Overwrite on each successful read so that only the last
+                    # read snapshot is used for consistency checking.  Multiple
+                    # reads may occur during the read phase; we keep the final
+                    # one because it is the most up-to-date view of the data.
                     final_read = set(value)
                     read_count += 1
 

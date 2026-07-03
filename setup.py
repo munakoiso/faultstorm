@@ -9,7 +9,8 @@ setup(
         "faultstorm.scripts": ["*.sh", "*.conf"],
     },
     python_requires=">=3.9",
-    install_requires=[
-        "psycopg2-binary",
-    ],
+    install_requires=[],
+    extras_require={
+        "postgres": ["psycopg2-binary"],
+    },
 )
