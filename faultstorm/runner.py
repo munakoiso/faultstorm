@@ -18,6 +18,7 @@ from faultstorm.faults.actions import FaultRegistry
 from faultstorm.faults.engine import FaultEngine
 from faultstorm.load_generator import LoadGenerator
 from faultstorm.model import CheckResult
+from faultstorm.network_latency import NetworkLatencyManager
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,24 @@ class TestRunner:
         else:
             logger.info("Random fault mode, scenario log: %s", self.config.scenario_log)
 
+        # Apply static network latency (if configured)
+        latency_mgr = NetworkLatencyManager(self.config)
+        latency_mgr.apply(self.dc_map)
+
+        try:
+            result = self._run_phases()
+        finally:
+            # Always clean up latency rules, even on failure
+            latency_mgr.remove()
+
+        return result
+
+    def _run_phases(self) -> CheckResult:
+        """Execute write+faults and read phases, then check consistency.
+
+        Returns:
+            CheckResult with validation results
+        """
         with open(self.config.operations_log, "w") as ops_log:
 
             load_gen = LoadGenerator(self.config, self.db_client)

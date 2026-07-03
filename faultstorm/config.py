@@ -7,7 +7,7 @@ by the DatabaseClient implementation.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -97,6 +97,18 @@ class TestConfig:
     # merged into every constructor call for that action type.
     # Example: ``{"freeze_processes": {"processes": ["postgres", "pgconsul"]}}``
     action_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # ---- Network latency emulation (static, for the entire test run) ----
+
+    # Cross-DC latency (ms) per DC pair.  Keys are (dc_a, dc_b) tuples
+    # (order-insensitive — the manager normalises them).
+    # Example: {("dc1", "dc2"): 5, ("dc1", "dc3"): 8, ("dc2", "dc3"): 3}
+    # Empty dict means no cross-DC latency.
+    cross_dc_delays: Dict[Tuple[str, str], int] = field(default_factory=dict)
+
+    # Extra delay (ms) added to all DB ↔ ZK traffic (db_nodes ↔ extra_nodes),
+    # applied on top of any cross-DC delay.  0 means no extra delay.
+    db_zk_delay_ms: int = 0
 
     @property
     def all_nodes(self) -> List[str]:

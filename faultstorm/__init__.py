@@ -13,11 +13,13 @@ Usage::
 from faultstorm.config import TestConfig
 from faultstorm.db_client import DatabaseClient
 from faultstorm.model import CheckResult
+from faultstorm.network_latency import NetworkLatencyManager
 from faultstorm.runner import TestRunner
 
 __all__ = [
     "TestConfig",
     "DatabaseClient",
     "CheckResult",
+    "NetworkLatencyManager",
     "TestRunner",
 ]

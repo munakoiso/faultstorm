@@ -84,7 +84,7 @@ FREEZE_LOG_FILE = "/var/log/process_freezer.log"
 
 
 def before_scenario(context, scenario):
-    """Clean up iptables rules, freeze flags and processes before each scenario."""
+    """Clean up iptables rules, tc rules, freeze flags and processes before each scenario."""
     for node in ALL_NODES:
         # Remove freeze flag file (deactivate freezer)
         try:
@@ -97,6 +97,13 @@ def before_scenario(context, scenario):
         try:
             ClusterManager.exec_on_node(
                 node, ["truncate", "-s", "0", FREEZE_LOG_FILE], timeout=5
+            )
+        except Exception:
+            pass
+        # Remove tc/netem rules (reset to default qdisc)
+        try:
+            ClusterManager.exec_on_node(
+                node, ["tc", "qdisc", "del", "dev", "eth0", "root"], timeout=5
             )
         except Exception:
             pass
