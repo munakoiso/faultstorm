@@ -90,6 +90,7 @@ def _compute_interval_availability(
 
     start_time = min(write_invoke_times)
     end_time = max(write_invoke_times)
+    logger.info("Write start time: %s, end time: %s", start_time, end_time)
 
     total_intervals = max(1, math.ceil((end_time - start_time) / interval))
 
@@ -103,6 +104,25 @@ def _compute_interval_availability(
         # Clamp to valid range (last boundary maps to the final interval).
         idx = min(idx, total_intervals - 1)
         available_intervals.add(idx)
+
+    unavailable_since = None
+    ts = start_time
+    while ts < end_time:
+        idx = int((ts - start_time) / interval)
+        # Clamp to valid range (last boundary maps to the final interval).
+        idx = min(idx, total_intervals - 1)
+        if idx in available_intervals:
+            if unavailable_since is not None:
+                logger.debug(
+                    "Unavailable from %s to %s",
+                    unavailable_since * interval + start_time,
+                    ts * interval + start_time,
+                )
+                unavailable_since = None
+        else:
+            if unavailable_since is None:
+                unavailable_since = ts
+        ts += interval
 
     return len(available_intervals) / total_intervals
 
