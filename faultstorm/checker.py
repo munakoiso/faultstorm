@@ -8,6 +8,7 @@ and recovered (indeterminate) writes.
 
 import json
 import logging
+import math
 from typing import Any, List, Set
 
 from faultstorm.model import CheckResult
@@ -45,6 +46,65 @@ def parse_operations_log(log_path: str) -> List[dict[str, Any]]:
     return operations
 
 
+def _compute_interval_availability(operations: List[dict[str, Any]], interval: float = 0.1) -> float:
+    """Compute write availability using time-interval bucketing.
+
+    Divides the time span from the first write attempt (INVOKE with action
+    "add") to the last write attempt into fixed-size intervals and checks
+    whether each interval contains at least one successful write (OK with
+    action "add").
+
+    Availability = (number of intervals with ≥1 successful write)
+                   / (total number of intervals)
+
+    Args:
+        operations: Parsed operations list (each element has "type",
+            "action", "timestamp", etc.)
+        interval: Interval length in seconds (default 0.1 s)
+
+    Returns:
+        Availability as a float in [0.0, 1.0].  Returns 0.0 when there
+        are no write attempts.
+    """
+    # Collect timestamps for all write invocations and successful writes.
+    write_invoke_times: List[float] = []
+    ok_write_times: List[float] = []
+
+    for op in operations:
+        action = op.get("action", "")
+        if action != "add":
+            continue
+        op_type = op.get("type", "")
+        ts = op.get("timestamp")
+        if ts is None:
+            continue
+        if op_type == INVOKE:
+            write_invoke_times.append(float(ts))
+        elif op_type == OK:
+            ok_write_times.append(float(ts))
+
+    if not write_invoke_times:
+        return 0.0
+
+    start_time = min(write_invoke_times)
+    end_time = max(write_invoke_times)
+
+    total_intervals = max(1, math.ceil((end_time - start_time) / interval))
+
+    if not ok_write_times:
+        return 0.0
+
+    # Build a set of interval indices that contain at least one successful write.
+    available_intervals: set[int] = set()
+    for ts in ok_write_times:
+        idx = int((ts - start_time) / interval)
+        # Clamp to valid range (last boundary maps to the final interval).
+        idx = min(idx, total_intervals - 1)
+        available_intervals.add(idx)
+
+    return len(available_intervals) / total_intervals
+
+
 def check_consistency(operations_log: str) -> CheckResult:
     """Check data consistency from an operations log.
 
@@ -57,6 +117,11 @@ def check_consistency(operations_log: str) -> CheckResult:
     - lost = successful_adds - final_read
     - unexpected = final_read - attempted
     - recovered = (final_read ∩ attempted) - successful_adds
+
+    Write availability is computed using time-interval bucketing: the time
+    from the first write attempt to the last is divided into 0.1 s intervals,
+    and the cluster is considered available in a given interval if at least
+    one successful write occurred during that interval.
 
     Args:
         operations_log: Path to the operations log file
@@ -115,9 +180,7 @@ def check_consistency(operations_log: str) -> CheckResult:
     successful_adds = len(successful)
     failed_adds = len(failed)
 
-    write_availability = 0.0
-    if total_attempts > 0:
-        write_availability = successful_adds / total_attempts
+    write_availability = _compute_interval_availability(operations)
 
     valid = len(lost) == 0 and len(unexpected) == 0
 

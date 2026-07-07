@@ -18,7 +18,7 @@ class CheckResult:
         total_attempts: Total number of write attempts
         successful_adds: Number of confirmed successful writes
         failed_adds: Number of confirmed failed writes
-        write_availability: Fraction of successful writes
+        write_availability: Fraction of 0.1s time intervals with at least one successful write
         errors: Optional error message
     """
 
