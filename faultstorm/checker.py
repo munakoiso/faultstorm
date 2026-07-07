@@ -46,7 +46,9 @@ def parse_operations_log(log_path: str) -> List[dict[str, Any]]:
     return operations
 
 
-def _compute_interval_availability(operations: List[dict[str, Any]], interval: float = 0.1) -> float:
+def _compute_interval_availability(
+    operations: List[dict[str, Any]], interval: float = 0.1
+) -> float:
     """Compute write availability using time-interval bucketing.
 
     Divides the time span from the first write attempt (INVOKE with action

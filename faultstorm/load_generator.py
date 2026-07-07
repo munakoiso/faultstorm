@@ -53,6 +53,10 @@ class LoadGenerator:
         self._node_index = 0
         self._node_lock = threading.Lock()
         self._stop_event = threading.Event()
+        # Track in-flight timeout threads so we can drain them before
+        # closing the ops log or exiting.
+        self._pending_threads: list[threading.Thread] = []
+        self._pending_lock = threading.Lock()
 
     def _get_next_value(self) -> int:
         """Get next sequential value (thread-safe).
@@ -95,20 +99,17 @@ class LoadGenerator:
             log_file.write(json.dumps(event) + "\n")
             log_file.flush()
 
-    @staticmethod
-    def _run_with_timeout(fn: Callable[[], Any], timeout_sec: float) -> Any:
+    def _run_with_timeout(self, fn: Callable[[], Any], timeout_sec: float) -> Any:
         """Run a function with an application-side timeout.
 
         Starts *fn* in a daemon thread and waits up to *timeout_sec*
         seconds for it to complete.  If the function does not finish
-        in time, ``TimeoutError`` is raised and the background thread
-        is abandoned (daemon, so it won't block process exit).
+        in time, ``TimeoutError`` is raised and the thread is tracked
+        in ``_pending_threads`` so that :meth:`drain_pending` can wait
+        for it to finish before the ops log is closed.
 
-        The abandoned thread is not killed — it will eventually
-        terminate on its own once the underlying operation completes
-        or its own timeout fires (e.g. ``statement_timeout`` on the
-        database side).  Callers must ensure that *fn* cannot block
-        indefinitely.
+        Callers must ensure that *fn* cannot block indefinitely (e.g.
+        by setting ``statement_timeout`` on the database connection).
 
         Args:
             fn: Callable to execute
@@ -136,11 +137,42 @@ class LoadGenerator:
         t.start()
 
         if not done_event.wait(timeout=timeout_sec):
+            # Track the abandoned thread so drain_pending() can wait for it.
+            with self._pending_lock:
+                self._pending_threads.append(t)
             raise TimeoutError(f"Operation timed out after {timeout_sec}s")
 
         if "error" in result_holder:
             raise result_holder["error"]
         return result_holder.get("result")
+
+    def drain_pending(self, timeout: float = 30.0) -> None:
+        """Wait for all in-flight timeout threads to finish.
+
+        After writers are stopped, some database operations may still
+        be running in daemon threads that timed out from the caller's
+        perspective but are still executing against the database.
+        Waiting for them ensures their writes either commit (and appear
+        in the ops log as INFO/indeterminate) or fail before we close
+        the log and proceed to the read phase.
+
+        Args:
+            timeout: Maximum seconds to wait for each thread.
+        """
+        with self._pending_lock:
+            threads = list(self._pending_threads)
+            self._pending_threads.clear()
+
+        if threads:
+            logger.info("Draining %d pending timeout threads...", len(threads))
+
+        for t in threads:
+            t.join(timeout=timeout)
+            if t.is_alive():
+                logger.warning("Pending thread %s did not finish within %.1fs", t.name, timeout)
+
+        if threads:
+            logger.info("All pending threads drained")
 
     def setup(self) -> None:
         """Set up the test table.
@@ -226,21 +258,20 @@ class LoadGenerator:
             self._log_event(log_file, FAIL, "read", node=node, error=str(e))
             return None
 
-    def _writer_loop(self, node: str, log_file: IO[str], done: threading.Event) -> None:
+    def _writer_loop(self, node: str, log_file: IO[str]) -> None:
         """Write loop for a single writer thread.
 
         Continuously writes sequential values to the given node until
-        *done* is set.
+        ``_stop_event`` is set.
 
         Args:
             node: Target DB node
             log_file: Operations log file
-            done: Event signalling that the write phase is over
         """
-        while not done.is_set():
+        while not self._stop_event.is_set():
             value = self._get_next_value()
             self.add(value, log_file, node=node)
-            if done.wait(self.config.add_interval):
+            if self._stop_event.wait(self.config.add_interval):
                 break
 
     def run_write_phase(self, duration: int, log_file: IO[str]) -> None:
@@ -254,15 +285,13 @@ class LoadGenerator:
             duration: Duration in seconds
             log_file: Operations log file
         """
-        write_done = threading.Event()
-
         nodes = self.db_client.get_db_nodes()
-        threads = []
+        threads: list[threading.Thread] = []
         for node in nodes:
             for i in range(self.config.writers_per_node):
                 t = threading.Thread(
                     target=self._writer_loop,
-                    args=(node, log_file, write_done),
+                    args=(node, log_file),
                     name=f"writer-{node}-{i}",
                 )
                 t.start()
@@ -278,10 +307,18 @@ class LoadGenerator:
 
         # Block until duration expires or stop() is called externally
         self._stop_event.wait(duration)
-        write_done.set()
+        self._stop_event.set()
 
         for t in threads:
             t.join()
+
+        # Wait for any in-flight DB operations that timed out but may
+        # still be executing in daemon threads.
+        self.drain_pending()
+
+        # Reset the stop event so that subsequent phases (e.g. read)
+        # can run normally on the same LoadGenerator instance.
+        self._stop_event.clear()
 
         logger.info("All writers stopped")
 
@@ -301,5 +338,10 @@ class LoadGenerator:
                 break
 
     def stop(self) -> None:
-        """Signal the load generator to stop."""
+        """Signal the load generator to stop.
+
+        Writer threads observe ``_stop_event`` and exit on their own;
+        :meth:`run_write_phase` joins them before returning.  This
+        method is safe to call from a signal handler.
+        """
         self._stop_event.set()
