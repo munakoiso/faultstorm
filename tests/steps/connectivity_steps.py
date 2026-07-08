@@ -152,17 +152,6 @@ def step_all_nodes_can_reach(context):
             if src != dst:
                 assert_can_reach(src, dst)
 
-
-@then('the load node cannot reach "{node}"')
-def step_load_cannot_reach_node(context, node):
-    assert_cannot_reach(context.load_node, node)
-
-
-@then('node "{node}" cannot reach the load node')
-def step_node_cannot_reach_load(context, node):
-    assert_cannot_reach(node, context.load_node)
-
-
 @then('the load node can reach "{node}"')
 def step_load_can_reach_node(context, node):
     assert_can_reach(context.load_node, node)

@@ -7,8 +7,8 @@ Feature: PartitionRandomDcAction
     Then nodes in DC "dc1" cannot reach nodes outside DC "dc1"
     And nodes outside DC "dc1" cannot reach nodes in DC "dc1"
     And nodes within DC "dc1" can reach each other
-    And the load node cannot reach nodes in DC "dc1"
-    And nodes in DC "dc1" cannot reach the load node
+    And the load node can reach nodes in DC "dc1"
+    And nodes in DC "dc1" can reach the load node
     When I heal the partition_random_dc action
     Then all nodes can reach each other
 

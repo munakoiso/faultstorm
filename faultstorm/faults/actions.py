@@ -15,7 +15,7 @@ The engine writes lines in the format:
     [<timestamp>] <action_name> <ordinal> <params>    (fire-and-forget action)
 
 and during replay, looks up the class by action_name and calls
-Class.deserialize(params_string, db_nodes, extra_nodes, load_node, dc_map).
+Class.deserialize(params_string, db_nodes, extra_nodes, dc_map).
 """
 
 import logging
@@ -34,13 +34,9 @@ logger = logging.getLogger(__name__)
 class FaultAction(ABC):
     """Abstract base class for fault actions.
 
-    Every action receives db_nodes, extra_nodes, load_node, dc_map, and an
+    Every action receives db_nodes, extra_nodes, dc_map, and an
     ordinal at construction time. The ordinal is a sequential number assigned
     by the engine and used by network partitions as the iptables chain ID.
-
-    ``load_node`` is the node running the load generator (write/read traffic).
-    It is passed to all actions but currently only used by
-    PartitionRandomSubnetAction. It is NOT serialized.
 
     ``dc_map`` maps datacenter names to lists of node names. It is passed to
     all actions but currently only used by PartitionRandomDcAction. It is NOT
@@ -68,13 +64,11 @@ class FaultAction(ABC):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ):
         self.db_nodes = db_nodes
         self.extra_nodes = extra_nodes
         self.ordinal = ordinal
-        self.load_node = load_node
         self.dc_map = dc_map or {}
 
     @property
@@ -114,7 +108,6 @@ class FaultAction(ABC):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "FaultAction":
         """Reconstruct an action from a serialized parameter string.
@@ -126,7 +119,6 @@ class FaultAction(ABC):
                     starts with ordinal
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
-            load_node: Load generator node name (not serialized)
             dc_map: DC-to-nodes mapping (not serialized)
 
         Returns:
@@ -231,11 +223,10 @@ class WaitAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         seconds: int = 0,
     ):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.seconds = seconds
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
@@ -253,15 +244,12 @@ class WaitAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "WaitAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         seconds = int(parts[1])
-        return cls(
-            db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, seconds=seconds
-        )
+        return cls(db_nodes, extra_nodes, ordinal, dc_map=dc_map, seconds=seconds)
 
 
 class KillProcessAction(FaultAction):
@@ -278,7 +266,6 @@ class KillProcessAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         process: Optional[str] = None,
         node: Optional[str] = None,
@@ -290,14 +277,13 @@ class KillProcessAction(FaultAction):
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
             ordinal: Sequential fault number (ignored by kill)
-            load_node: Load generator node name (not used by kill)
             dc_map: DC-to-nodes mapping (not used by kill)
             process: Specific process to kill (None = pick random on execute)
             node: Specific node to target (None = pick random on execute)
             processes: Pool of process names to choose from.
                        Defaults to ["postgres", "pgconsul"].
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.process = process
         self.node = node
         self.processes = processes or ["postgres", "pgconsul"]
@@ -322,7 +308,6 @@ class KillProcessAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "KillProcessAction":
         parts = params.strip().split()
@@ -331,7 +316,6 @@ class KillProcessAction(FaultAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             process=parts[1],
             node=parts[2],
@@ -352,12 +336,11 @@ class PartitionRandomHalvesAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         group1: Optional[List[str]] = None,
         group2: Optional[List[str]] = None,
     ):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.group1 = group1
         self.group2 = group2
 
@@ -397,7 +380,6 @@ class PartitionRandomHalvesAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "PartitionRandomHalvesAction":
         parts = params.strip().split()
@@ -408,7 +390,6 @@ class PartitionRandomHalvesAction(FaultAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             group1=group1,
             group2=group2,
@@ -429,11 +410,10 @@ class PartitionMajoritiesRingAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         ordered: Optional[List[str]] = None,
     ):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.ordered = ordered
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
@@ -466,15 +446,12 @@ class PartitionMajoritiesRingAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "PartitionMajoritiesRingAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         ordered = parts[1].split(",")
-        return cls(
-            db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, ordered=ordered
-        )
+        return cls(db_nodes, extra_nodes, ordinal, dc_map=dc_map, ordered=ordered)
 
 
 class PartitionRandomNodeAction(FaultAction):
@@ -492,26 +469,18 @@ class PartitionRandomNodeAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         node: Optional[str] = None,
     ):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.node = node
-
-    def _affected_nodes(self) -> List[str]:
-        """All nodes affected by the partition (including load_node)."""
-        nodes = list(self.all_nodes)
-        if self.load_node and self.load_node not in nodes:
-            nodes.append(self.load_node)
-        return nodes
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
         if self.node is None:
             self.node = random.choice(self.all_nodes)
         logger.info("Partition node: %s isolated", self.node)
 
-        affected = self._affected_nodes()
+        affected = list(self.all_nodes)
         others = [n for n in affected if n != self.node]
         chain_name = partitioners.get_chain_name(self.ordinal)
 
@@ -526,7 +495,7 @@ class PartitionRandomNodeAction(FaultAction):
 
     def heal(self) -> None:
         logger.info("Healing partition node ordinal=%d", self.ordinal)
-        partitioners.heal_partition(self.ordinal, self._affected_nodes())
+        partitioners.heal_partition(self.ordinal, list(self.all_nodes))
 
     def serialize(self) -> str:
         return f"{self.ordinal} {self.node or ''}"
@@ -537,13 +506,12 @@ class PartitionRandomNodeAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "PartitionRandomNodeAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         node = parts[1] if len(parts) > 1 else None
-        return cls(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, node=node)
+        return cls(db_nodes, extra_nodes, ordinal, dc_map=dc_map, node=node)
 
 
 class PartitionRandomSubnetAction(FaultAction):
@@ -586,7 +554,6 @@ class PartitionRandomSubnetAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         node: Optional[str] = None,
         direction: Optional[str] = None,
@@ -599,7 +566,6 @@ class PartitionRandomSubnetAction(FaultAction):
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names (ZK nodes)
             ordinal: Sequential fault number (used as iptables chain ID)
-            load_node: Load generator node name (included in ``db`` subnet)
             dc_map: DC-to-nodes mapping (not used by this action)
             node: DB node to apply rules on (None = pick random on execute)
             direction: Traffic direction to filter (None = pick random)
@@ -607,7 +573,7 @@ class PartitionRandomSubnetAction(FaultAction):
             blocked_nodes: Explicit list of blocked node names.
                            If None, computed from subnet_type on execute.
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.node = node
         self.direction = direction
         self.subnet_type = subnet_type
@@ -617,8 +583,6 @@ class PartitionRandomSubnetAction(FaultAction):
         """Compute the list of blocked nodes based on subnet_type."""
         zk_nodes = list(self.extra_nodes)
         other_nodes = [n for n in self.db_nodes if n != self.node]
-        if self.load_node:
-            other_nodes.append(self.load_node)
         if self.subnet_type == self.SUBNET_ZK:
             return zk_nodes
         elif self.subnet_type == self.SUBNET_DB:
@@ -684,7 +648,6 @@ class PartitionRandomSubnetAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "PartitionRandomSubnetAction":
         parts = params.strip().split()
@@ -697,7 +660,6 @@ class PartitionRandomSubnetAction(FaultAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             node=node,
             direction=direction,
@@ -726,7 +688,6 @@ class PartitionRandomDcAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         dc_name: Optional[str] = None,
     ):
@@ -736,25 +697,17 @@ class PartitionRandomDcAction(FaultAction):
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
             ordinal: Sequential fault number (used as iptables chain ID)
-            load_node: Load generator node name (not used by this action)
             dc_map: DC-to-nodes mapping (used to pick a random DC
                     and resolve its nodes)
             dc_name: Specific DC to isolate (None = pick random on execute)
         """
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.dc_name = dc_name
 
     def _get_dc_nodes(self) -> List[str]:
         """Get list of nodes for the chosen DC from dc_map."""
         assert self.dc_name is not None, "dc_name was never set"
         return list(self.dc_map.get(self.dc_name, []))
-
-    def _affected_nodes(self) -> List[str]:
-        """All nodes affected by the partition (including load_node)."""
-        nodes = list(self.all_nodes)
-        if self.load_node and self.load_node not in nodes:
-            nodes.append(self.load_node)
-        return nodes
 
     def execute(self, stop_event: Optional[threading.Event] = None) -> None:
         if not self.dc_map:
@@ -769,7 +722,7 @@ class PartitionRandomDcAction(FaultAction):
             logger.warning("partition_random_dc: DC %s has no nodes, skipping", self.dc_name)
             return
 
-        affected = self._affected_nodes()
+        affected = list(self.all_nodes)
         others = [n for n in affected if n not in dc_nodes]
         logger.info("Partition DC %s: isolated=%s others=%s", self.dc_name, dc_nodes, others)
 
@@ -789,7 +742,7 @@ class PartitionRandomDcAction(FaultAction):
 
     def heal(self) -> None:
         logger.info("Healing partition DC %s ordinal=%d", self.dc_name, self.ordinal)
-        partitioners.heal_partition(self.ordinal, self._affected_nodes())
+        partitioners.heal_partition(self.ordinal, list(self.all_nodes))
 
     def serialize(self) -> str:
         return f"{self.ordinal} {self.dc_name}"
@@ -800,15 +753,12 @@ class PartitionRandomDcAction(FaultAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "PartitionRandomDcAction":
         parts = params.strip().split()
         ordinal = int(parts[0])
         dc_name = parts[1] if len(parts) > 1 else None
-        return cls(
-            db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map, dc_name=dc_name
-        )
+        return cls(db_nodes, extra_nodes, ordinal, dc_map=dc_map, dc_name=dc_name)
 
 
 class BaseFreezeAction(FaultAction):
@@ -843,13 +793,12 @@ class BaseFreezeAction(FaultAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         processes: Optional[List[str]] = None,
         freeze_duration_range: Optional[Tuple[int, int]] = None,
         freeze_pause_range: Optional[Tuple[int, int]] = None,
     ):
-        super().__init__(db_nodes, extra_nodes, ordinal, load_node=load_node, dc_map=dc_map)
+        super().__init__(db_nodes, extra_nodes, ordinal, dc_map=dc_map)
         self.processes = processes or ["postgres"]
         self.freeze_duration_range = freeze_duration_range or self.DEFAULT_FREEZE_RANGE
         self.freeze_pause_range = freeze_pause_range or self.DEFAULT_PAUSE_RANGE
@@ -937,7 +886,6 @@ class FreezeProcessesAction(BaseFreezeAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         node: Optional[str] = None,
         processes: Optional[List[str]] = None,
@@ -950,7 +898,6 @@ class FreezeProcessesAction(BaseFreezeAction):
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
             ordinal: Sequential fault number
-            load_node: Load generator node name (not used by this action)
             dc_map: DC-to-nodes mapping (not used by this action)
             node: Specific node to target (None = pick random DB node)
             processes: Process name patterns to freeze.
@@ -964,7 +911,6 @@ class FreezeProcessesAction(BaseFreezeAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             processes=processes,
             freeze_duration_range=freeze_duration_range,
@@ -1005,7 +951,6 @@ class FreezeProcessesAction(BaseFreezeAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "FreezeProcessesAction":
         parts = params.strip().split()
@@ -1022,7 +967,6 @@ class FreezeProcessesAction(BaseFreezeAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             node=node,
             processes=processes,
@@ -1053,7 +997,6 @@ class FreezeProcessesGroupAction(BaseFreezeAction):
         db_nodes: List[str],
         extra_nodes: List[str],
         ordinal: int = 0,
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
         group: Optional[str] = None,
         processes: Optional[List[str]] = None,
@@ -1066,7 +1009,6 @@ class FreezeProcessesGroupAction(BaseFreezeAction):
             db_nodes: Database node names
             extra_nodes: Extra infrastructure node names
             ordinal: Sequential fault number
-            load_node: Load generator node name (not used by this action)
             dc_map: DC-to-nodes mapping (not used by this action)
             group: Node group to target: ``db`` or ``extra``.
                    None = pick randomly on execute.
@@ -1081,7 +1023,6 @@ class FreezeProcessesGroupAction(BaseFreezeAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             processes=processes,
             freeze_duration_range=freeze_duration_range,
@@ -1140,7 +1081,6 @@ class FreezeProcessesGroupAction(BaseFreezeAction):
         params: str,
         db_nodes: List[str],
         extra_nodes: List[str],
-        load_node: Optional[str] = None,
         dc_map: Optional[Dict[str, List[str]]] = None,
     ) -> "FreezeProcessesGroupAction":
         parts = params.strip().split()
@@ -1157,7 +1097,6 @@ class FreezeProcessesGroupAction(BaseFreezeAction):
             db_nodes,
             extra_nodes,
             ordinal,
-            load_node=load_node,
             dc_map=dc_map,
             group=group,
             processes=processes,

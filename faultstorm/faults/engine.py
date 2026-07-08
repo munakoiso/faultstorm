@@ -222,7 +222,6 @@ class FaultEngine:
         """Inner random-mode loop (runs until ``_stop_event`` is set)."""
         db = self.config.db_nodes
         extra = self.config.extra_nodes
-        load_node = self.config.load_node
         dc_map = self.dc_map
         min_wait = self.config.complex_fault_min_wait
         max_wait = self.config.complex_fault_max_wait
@@ -230,16 +229,13 @@ class FaultEngine:
         while not self._stop_event.is_set():
             # 2 complex fault injections per cycle
             for i in range(self.config.parallel_faults_count):
-                self._inject_complex_fault(
-                    db, extra, load_node, dc_map, fault_classes, complex_classes
-                )
+                self._inject_complex_fault(db, extra, dc_map, fault_classes, complex_classes)
                 if i < self.config.parallel_faults_count - 1:
                     wait_sec = random.randint(min_wait, max_wait)
                     wait_a_bit = WaitAction(
                         db,
                         extra,
                         self._get_next_ordinal(),
-                        load_node=load_node,
                         dc_map=dc_map,
                         seconds=wait_sec,
                     )
@@ -250,7 +246,6 @@ class FaultEngine:
                 db,
                 extra,
                 self._get_next_ordinal(),
-                load_node=load_node,
                 dc_map=dc_map,
                 seconds=self.config.fault_active_duration,
             )
@@ -266,7 +261,6 @@ class FaultEngine:
                 db,
                 extra,
                 self._get_next_ordinal(),
-                load_node=load_node,
                 dc_map=dc_map,
                 seconds=self.config.fault_pause_duration,
             )
@@ -290,7 +284,6 @@ class FaultEngine:
         self,
         db: List[str],
         extra: List[str],
-        load_node: Optional[str],
         dc_map: Dict[str, List[str]],
         fault_classes: List[Type[FaultAction]],
         complex_classes: List[Type[FaultAction]],
@@ -312,7 +305,6 @@ class FaultEngine:
         Args:
             db: Database node names
             extra: Extra infrastructure node names
-            load_node: Load generator node name
             dc_map: DC-to-nodes mapping
             fault_classes: All enabled fault action classes
             complex_classes: Host-targetable subset (may be empty)
@@ -350,7 +342,7 @@ class FaultEngine:
             if target_node is not None:
                 extra_kwargs["node"] = target_node
 
-            action = cls(db, extra, ordinal, load_node=load_node, dc_map=dc_map, **extra_kwargs)
+            action = cls(db, extra, ordinal, dc_map=dc_map, **extra_kwargs)
 
             if action.destructive:
                 self._destructive_count += 1
@@ -365,7 +357,6 @@ class FaultEngine:
                     db,
                     extra,
                     self._get_next_ordinal(),
-                    load_node=load_node,
                     dc_map=dc_map,
                     seconds=wait_sec,
                 )
@@ -408,7 +399,6 @@ class FaultEngine:
                     self.config.db_nodes,
                     self.config.extra_nodes,
                     self._get_next_ordinal(),
-                    load_node=self.config.load_node,
                     dc_map=self.dc_map,
                     seconds=wait_sec,
                 )
@@ -458,7 +448,6 @@ class FaultEngine:
         """
         db = self.config.db_nodes
         extra = self.config.extra_nodes
-        load_node = self.config.load_node
         dc_map = self.dc_map
         results: List[tuple[FaultAction, bool]] = []
 
@@ -491,7 +480,7 @@ class FaultEngine:
                         f"Available: {', '.join(self.registry.list_names())}"
                     )
 
-                action = cls.deserialize(params, db, extra, load_node=load_node, dc_map=dc_map)
+                action = cls.deserialize(params, db, extra, dc_map=dc_map)
                 results.append((action, is_heal))
 
         logger.info("Parsed scenario %s: %d entries", path, len(results))

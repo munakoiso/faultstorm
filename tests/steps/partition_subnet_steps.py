@@ -17,7 +17,7 @@ from steps.connectivity_steps import (
 def step_execute_partition_subnet(context, node, direction, subnet):
     action = PartitionRandomSubnetAction(
         context.db_nodes, context.extra_nodes, ordinal=1,
-        load_node=context.load_node, dc_map=context.dc_map,
+        dc_map=context.dc_map,
         node=node, direction=direction, subnet_type=subnet,
     )
     action.execute()
@@ -51,9 +51,9 @@ def step_cannot_send_to_db(context, node):
         assert_cannot_send_to(node, dst)
 
 
-@then('node "{node}" cannot send traffic to the load node')
-def step_cannot_send_to_load(context, node):
-    assert_cannot_send_to(node, context.load_node)
+@then('node "{node}" can send traffic to the load node')
+def step_can_send_to_load(context, node):
+    assert_can_send_to(node, context.load_node)
 
 
 @then('other db nodes can send traffic to "{node}"')
@@ -82,11 +82,6 @@ def step_blocked_cannot_send(context, node):
         assert_cannot_send_to(blocked, node)
 
 
-@then('the load node cannot send traffic to "{node}"')
-def step_load_cannot_send(context, node):
-    assert_cannot_send_to(context.load_node, node)
-
-
 @when('I heal the partition_random_subnet action')
 def step_heal_partition_subnet(context):
     context.action.heal()
@@ -99,7 +94,6 @@ def step_given_subnet_action(context, ordinal, node, direction, subnet, blocked_
     blocked = blocked_csv.split(',')
     context.action = PartitionRandomSubnetAction(
         context.db_nodes, context.extra_nodes, ordinal=ordinal,
-        load_node=context.load_node,
         node=node, direction=direction, subnet_type=subnet,
         blocked_nodes=blocked,
     )
@@ -110,7 +104,6 @@ def step_serialize_subnet(context):
     serialized = context.action.serialize()
     context.deserialized = PartitionRandomSubnetAction.deserialize(
         serialized, context.db_nodes, context.extra_nodes,
-        load_node=context.load_node,
     )
 
 

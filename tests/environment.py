@@ -19,7 +19,7 @@ COMPOSE_FILE = os.path.join(COMPOSE_DIR, "docker-compose.yml")
 DB_NODES = ["faultstorm_node1", "faultstorm_node2", "faultstorm_node3"]
 EXTRA_NODES = ["faultstorm_extra1", "faultstorm_extra2"]
 LOAD_NODE = "faultstorm_loadnode"
-ALL_NODES = DB_NODES + EXTRA_NODES + [LOAD_NODE]
+ALL_NODES = DB_NODES + EXTRA_NODES
 
 DC_MAP = {
     "dc1": ["faultstorm_node1", "faultstorm_extra1"],

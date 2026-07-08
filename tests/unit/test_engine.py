@@ -402,8 +402,7 @@ class TestInjectComplexFault:
         engine._open_log(log_path)
 
         engine._inject_complex_fault(
-            config.db_nodes, config.extra_nodes,
-            config.load_node, {},
+            config.db_nodes, config.extra_nodes, {},
             [StubAction], [],
         )
         engine._close_log()
@@ -425,8 +424,7 @@ class TestInjectComplexFault:
         engine._open_log(log_path)
 
         engine._inject_complex_fault(
-            config.db_nodes, config.extra_nodes,
-            config.load_node, {},
+            config.db_nodes, config.extra_nodes, {},
             [DestructiveStubAction], [],
         )
         engine._close_log()

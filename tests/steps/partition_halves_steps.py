@@ -17,7 +17,7 @@ def step_split_groups(context, g1_csv, g2_csv):
 def step_execute_partition_halves(context):
     action = PartitionRandomHalvesAction(
         context.db_nodes, context.extra_nodes, ordinal=1,
-        load_node=context.load_node, dc_map=context.dc_map,
+        dc_map=context.dc_map,
         group1=context.group1, group2=context.group2,
     )
     action.execute()

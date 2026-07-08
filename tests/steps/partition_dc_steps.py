@@ -11,7 +11,7 @@ from steps.connectivity_steps import assert_can_reach, assert_cannot_reach
 def step_execute_partition_dc(context, dc_name):
     action = PartitionRandomDcAction(
         context.db_nodes, context.extra_nodes, ordinal=1,
-        load_node=context.load_node, dc_map=context.dc_map,
+        dc_map=context.dc_map,
         dc_name=dc_name,
     )
     action.execute()
@@ -51,18 +51,18 @@ def step_within_dc_can_reach(context, dc_name):
                 assert_can_reach(src, dst)
 
 
-@then('the load node cannot reach nodes in DC "{dc_name}"')
-def step_load_cannot_reach_dc(context, dc_name):
+@then('the load node can reach nodes in DC "{dc_name}"')
+def step_load_can_reach_dc(context, dc_name):
     dc_nodes = context.dc_map.get(dc_name, [])
     for node in dc_nodes:
-        assert_cannot_reach(context.load_node, node)
+        assert_can_reach(context.load_node, node)
 
 
-@then('nodes in DC "{dc_name}" cannot reach the load node')
-def step_dc_cannot_reach_load(context, dc_name):
+@then('nodes in DC "{dc_name}" can reach the load node')
+def step_dc_can_reach_load(context, dc_name):
     dc_nodes = context.dc_map.get(dc_name, [])
     for node in dc_nodes:
-        assert_cannot_reach(node, context.load_node)
+        assert_can_reach(node, context.load_node)
 
 
 @when('I heal the partition_random_dc action')
@@ -74,7 +74,7 @@ def step_heal_partition_dc(context):
 def step_execute_dc_empty_map(context):
     action = PartitionRandomDcAction(
         context.db_nodes, context.extra_nodes, ordinal=1,
-        load_node=context.load_node, dc_map={},
+        dc_map={},
     )
     action.execute()
     context.action = action

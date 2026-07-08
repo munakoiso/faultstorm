@@ -11,7 +11,7 @@ from steps.connectivity_steps import assert_can_reach, assert_cannot_reach
 def step_execute_partition_node(context, node):
     action = PartitionRandomNodeAction(
         context.db_nodes, context.extra_nodes, ordinal=1,
-        load_node=context.load_node, dc_map=context.dc_map,
+        dc_map=context.dc_map,
         node=node,
     )
     action.execute()

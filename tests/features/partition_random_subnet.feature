@@ -1,7 +1,6 @@
 Feature: PartitionRandomSubnetAction
   The partition_random_subnet action applies directional network
   filtering on a specific node for a chosen subnet group.
-  The load node is included in the "db" and "all" subnets.
 
   Scenario: Partition subnet blocks input traffic from ZK nodes and healing restores it
     When I execute a partition_random_subnet action on "faultstorm_node1" direction "input" subnet "zk"
@@ -12,21 +11,21 @@ Feature: PartitionRandomSubnetAction
     When I heal the partition_random_subnet action
     Then all nodes can reach each other
 
-  Scenario: Partition subnet blocks output traffic to DB nodes including load node and healing restores it
+  Scenario: Partition subnet blocks output traffic to DB nodes and healing restores it
     When I execute a partition_random_subnet action on "faultstorm_node1" direction "output" subnet "db"
     Then node "faultstorm_node1" cannot send traffic to other db nodes
-    And node "faultstorm_node1" cannot send traffic to the load node
+    And node "faultstorm_node1" can send traffic to the load node
     And other db nodes can send traffic to "faultstorm_node1"
     And the load node can send traffic to "faultstorm_node1"
     When I heal the partition_random_subnet action
     Then all nodes can reach each other
 
-  Scenario: Partition subnet blocks both directions for all subnets including load node and healing restores it
+  Scenario: Partition subnet blocks both directions for all subnets and healing restores it
     When I execute a partition_random_subnet action on "faultstorm_node1" direction "both" subnet "all"
     Then node "faultstorm_node1" cannot send traffic to any blocked node
     And no blocked node can send traffic to "faultstorm_node1"
-    And node "faultstorm_node1" cannot send traffic to the load node
-    And the load node cannot send traffic to "faultstorm_node1"
+    And node "faultstorm_node1" can send traffic to the load node
+    And the load node can send traffic to "faultstorm_node1"
     When I heal the partition_random_subnet action
     Then all nodes can reach each other
 
