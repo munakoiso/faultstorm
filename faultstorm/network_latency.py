@@ -129,10 +129,18 @@ class NetworkLatencyManager:
                 sorted(self._configured_nodes),
             )
 
-    def remove(self) -> None:
-        """Remove all previously applied latency rules."""
-        if not self._configured_nodes:
+    def remove(self, force_all_nodes: bool = False) -> None:
+        """Remove all previously applied latency rules.
+
+        Args:
+            force_all_nodes: if set - function will remove additional latency settings
+              from all config nodes
+        """
+        if not self._configured_nodes and not force_all_nodes:
             return
+
+        if force_all_nodes:
+            self._configured_nodes = set(self.config.db_nodes + self.config.extra_nodes)
 
         for node in list(self._configured_nodes):
             self._remove_node(node)
