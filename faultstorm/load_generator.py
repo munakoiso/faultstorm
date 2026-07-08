@@ -93,6 +93,7 @@ class LoadGenerator:
             "type": event_type,
             "action": action,
             "timestamp": time.time(),
+            "pretty_ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             **kwargs,
         }
         with self._log_lock:
