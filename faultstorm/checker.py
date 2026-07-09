@@ -127,6 +127,73 @@ def _compute_interval_availability(
     return len(available_intervals) / total_intervals
 
 
+def _log_problem_intervals(
+    problem_values: Set[int],
+    value_to_invoke_ts: dict[int, float],
+    start_time: float,
+    end_time: float,
+    label: str,
+    interval: float = 0.1,
+) -> None:
+    """Log time intervals where problematic writes were attempted.
+
+    For a given set of problematic values (e.g. lost or unexpected),
+    looks up the invoke timestamp for each value, buckets them into
+    fixed-size intervals, finds contiguous ranges of intervals that
+    contained at least one problematic write attempt, and logs each
+    range via ``logger.debug``.
+
+    Args:
+        problem_values: Set of values that had problems (lost / unexpected).
+        value_to_invoke_ts: Mapping from value to its invoke timestamp.
+        start_time: Earliest invoke timestamp (defines bucket origin).
+        end_time: Latest invoke timestamp.
+        label: Human-readable label used in log messages (e.g. "Lost writes").
+        interval: Bucket width in seconds (default 0.1 s).
+    """
+    if not problem_values:
+        return
+
+    total_intervals = max(1, math.ceil((end_time - start_time) / interval))
+
+    # Collect interval indices that contain at least one problematic invoke.
+    problem_indices: set[int] = set()
+    for val in problem_values:
+        ts = value_to_invoke_ts.get(val)
+        if ts is None:
+            continue
+        idx = int((ts - start_time) / interval)
+        idx = max(0, min(idx, total_intervals - 1))
+        problem_indices.add(idx)
+
+    if not problem_indices:
+        return
+
+    # Walk through all intervals and log contiguous problem ranges.
+    problem_since: float | None = None
+    for idx in range(total_intervals):
+        if idx in problem_indices:
+            if problem_since is None:
+                problem_since = start_time + idx * interval
+        else:
+            if problem_since is not None:
+                logger.debug(
+                    "%s from %s to %s",
+                    label,
+                    problem_since,
+                    start_time + idx * interval,
+                )
+                problem_since = None
+    # Flush trailing range.
+    if problem_since is not None:
+        logger.debug(
+            "%s from %s to %s",
+            label,
+            problem_since,
+            start_time + total_intervals * interval,
+        )
+
+
 def check_consistency(operations_log: str) -> CheckResult:
     """Check data consistency from an operations log.
 
@@ -159,6 +226,7 @@ def check_consistency(operations_log: str) -> CheckResult:
     # INFO values are in attempted but not in successful or failed
     final_read: Set[int] = set()
     read_count = 0
+    value_to_invoke_ts: dict[int, float] = {}  # value → invoke timestamp
 
     for op in operations:
         op_type = op.get("type", "")
@@ -171,6 +239,9 @@ def check_consistency(operations_log: str) -> CheckResult:
             int_value = int(value)
             if op_type == INVOKE:
                 attempted.add(int_value)
+                ts = op.get("timestamp")
+                if ts is not None:
+                    value_to_invoke_ts[int_value] = float(ts)
             elif op_type == OK:
                 successful.add(int_value)
             elif op_type == FAIL:
@@ -203,6 +274,16 @@ def check_consistency(operations_log: str) -> CheckResult:
     failed_adds = len(failed)
 
     write_availability = _compute_interval_availability(operations)
+
+    # Log time intervals where problematic writes were attempted.
+    if value_to_invoke_ts:
+        invoke_times = list(value_to_invoke_ts.values())
+        invoke_start = min(invoke_times)
+        invoke_end = max(invoke_times)
+        _log_problem_intervals(lost, value_to_invoke_ts, invoke_start, invoke_end, "Lost writes")
+        _log_problem_intervals(
+            unexpected, value_to_invoke_ts, invoke_start, invoke_end, "Unexpected writes"
+        )
 
     valid = len(lost) == 0 and len(unexpected) == 0
 
