@@ -9,6 +9,7 @@ and recovered (indeterminate) writes.
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Any, List, Set
 
 from faultstorm.model import CheckResult
@@ -20,6 +21,12 @@ INVOKE = "invoke"
 OK = "ok"
 FAIL = "fail"
 INFO = "info"
+
+
+def _fmt_ts(ts: float) -> str:
+    """Format a Unix timestamp as a human-readable UTC string with 0.1 s precision."""
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 100000}"
 
 
 def parse_operations_log(log_path: str) -> List[dict[str, Any]]:
@@ -90,7 +97,7 @@ def _compute_interval_availability(
 
     start_time = min(write_invoke_times)
     end_time = max(write_invoke_times)
-    logger.info("Write start time: %s, end time: %s", start_time, end_time)
+    logger.info("Write start time: %s, end time: %s", _fmt_ts(start_time), _fmt_ts(end_time))
 
     total_intervals = max(1, math.ceil((end_time - start_time) / interval))
 
@@ -115,8 +122,8 @@ def _compute_interval_availability(
             if unavailable_since is not None:
                 logger.debug(
                     "Unavailable from %s to %s",
-                    unavailable_since * interval + start_time,
-                    ts * interval + start_time,
+                    _fmt_ts(unavailable_since * interval + start_time),
+                    _fmt_ts(ts * interval + start_time),
                 )
                 unavailable_since = None
         else:
@@ -180,8 +187,8 @@ def _log_problem_intervals(
                 logger.debug(
                     "%s from %s to %s",
                     label,
-                    problem_since,
-                    start_time + idx * interval,
+                    _fmt_ts(problem_since),
+                    _fmt_ts(start_time + idx * interval),
                 )
                 problem_since = None
     # Flush trailing range.
@@ -189,8 +196,8 @@ def _log_problem_intervals(
         logger.debug(
             "%s from %s to %s",
             label,
-            problem_since,
-            start_time + total_intervals * interval,
+            _fmt_ts(problem_since),
+            _fmt_ts(start_time + total_intervals * interval),
         )
 
 
