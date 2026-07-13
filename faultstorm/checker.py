@@ -123,12 +123,12 @@ def _compute_interval_availability(
                 logger.debug(
                     "Unavailable from %s to %s",
                     _fmt_ts(unavailable_since * interval + start_time),
-                    _fmt_ts(ts * interval + start_time),
+                    _fmt_ts(idx * interval + start_time),
                 )
                 unavailable_since = None
         else:
             if unavailable_since is None:
-                unavailable_since = ts
+                unavailable_since = idx
         ts += interval
 
     return len(available_intervals) / total_intervals
