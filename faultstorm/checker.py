@@ -10,7 +10,7 @@ import json
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any, List, Set
+from typing import List, Set
 
 from faultstorm.model import CheckResult
 
@@ -29,69 +29,29 @@ def _fmt_ts(ts: float) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 100000}"
 
 
-def parse_operations_log(log_path: str) -> List[dict[str, Any]]:
-    """Parse JSON operations log file.
-
-    Each line is a JSON object with keys: type, action, value, node, timestamp.
-
-    Args:
-        log_path: Path to operations log
-
-    Returns:
-        List of operation dicts
-    """
-    operations: List[dict[str, Any]] = []
-    with open(log_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                operations.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                logger.warning("Skipping malformed line: %s (%s)", line, e)
-    return operations
-
-
 def _compute_interval_availability(
-    operations: List[dict[str, Any]], interval: float = 0.1
+    write_invoke_times: List[float],
+    ok_write_times: List[float],
+    interval: float = 0.1,
 ) -> float:
     """Compute write availability using time-interval bucketing.
 
-    Divides the time span from the first write attempt (INVOKE with action
-    "add") to the last write attempt into fixed-size intervals and checks
-    whether each interval contains at least one successful write (OK with
-    action "add").
+    Divides the time span from the first write attempt to the last write
+    attempt into fixed-size intervals and checks whether each interval
+    contains at least one successful write.
 
     Availability = (number of intervals with ≥1 successful write)
                    / (total number of intervals)
 
     Args:
-        operations: Parsed operations list (each element has "type",
-            "action", "timestamp", etc.)
+        write_invoke_times: Timestamps of all write invocations.
+        ok_write_times: Timestamps of all successful writes.
         interval: Interval length in seconds (default 0.1 s)
 
     Returns:
         Availability as a float in [0.0, 1.0].  Returns 0.0 when there
         are no write attempts.
     """
-    # Collect timestamps for all write invocations and successful writes.
-    write_invoke_times: List[float] = []
-    ok_write_times: List[float] = []
-
-    for op in operations:
-        action = op.get("action", "")
-        if action != "add":
-            continue
-        op_type = op.get("type", "")
-        ts = op.get("timestamp")
-        if ts is None:
-            continue
-        if op_type == INVOKE:
-            write_invoke_times.append(float(ts))
-        elif op_type == OK:
-            ok_write_times.append(float(ts))
-
     if not write_invoke_times:
         return 0.0
 
@@ -204,6 +164,10 @@ def _log_problem_intervals(
 def check_consistency(operations_log: str) -> CheckResult:
     """Check data consistency from an operations log.
 
+    Streams the operations log line-by-line to avoid loading the entire
+    file into memory — critical for long tests that produce hundreds of
+    megabytes of JSON.
+
     Analyzes write operations and final reads to detect:
     - Lost values: confirmed written but missing from final read (DATA LOSS)
     - Unexpected values: never attempted but found in final read (CORRUPTION)
@@ -225,8 +189,6 @@ def check_consistency(operations_log: str) -> CheckResult:
     Returns:
         CheckResult with validation details
     """
-    operations = parse_operations_log(operations_log)
-
     attempted: Set[int] = set()  # All values we tried to write (INVOKE)
     successful: Set[int] = set()  # Values confirmed written (OK)
     failed: Set[int] = set()  # Values confirmed NOT written (FAIL)
@@ -235,35 +197,60 @@ def check_consistency(operations_log: str) -> CheckResult:
     read_count = 0
     value_to_invoke_ts: dict[int, float] = {}  # value → invoke timestamp
 
-    for op in operations:
-        op_type = op.get("type", "")
-        action = op.get("action", "")
-        value = op.get("value")
-        if value is None:
-            continue
+    # Collect timestamps for availability calculation during the same pass.
+    write_invoke_times: List[float] = []
+    ok_write_times: List[float] = []
 
-        if action == "add":
-            int_value = int(value)
-            if op_type == INVOKE:
-                attempted.add(int_value)
-                ts = op.get("timestamp")
-                if ts is not None:
-                    value_to_invoke_ts[int_value] = float(ts)
-            elif op_type == OK:
-                successful.add(int_value)
-            elif op_type == FAIL:
-                failed.add(int_value)
-            # INFO: indeterminate — already in attempted, not in successful/failed
+    line_count = 0
 
-        elif action == "read":
-            if op_type == OK:
-                if isinstance(value, list):
-                    # Overwrite on each successful read so that only the last
-                    # read snapshot is used for consistency checking.  Multiple
-                    # reads may occur during the read phase; we keep the final
-                    # one because it is the most up-to-date view of the data.
-                    final_read = set(value)
-                    read_count += 1
+    with open(operations_log, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                op = json.loads(line)
+            except json.JSONDecodeError as e:
+                logger.warning("Skipping malformed line: %s (%s)", line[:200], e)
+                continue
+
+            line_count += 1
+
+            op_type = op.get("type", "")
+            action = op.get("action", "")
+            value = op.get("value")
+            ts = op.get("timestamp")
+
+            if action == "add":
+                if value is None:
+                    continue
+                int_value = int(value)
+
+                if op_type == INVOKE:
+                    attempted.add(int_value)
+                    if ts is not None:
+                        float_ts = float(ts)
+                        value_to_invoke_ts[int_value] = float_ts
+                        write_invoke_times.append(float_ts)
+                elif op_type == OK:
+                    successful.add(int_value)
+                    if ts is not None:
+                        ok_write_times.append(float(ts))
+                elif op_type == FAIL:
+                    failed.add(int_value)
+                # INFO: indeterminate — already in attempted, not in successful/failed
+
+            elif action == "read":
+                if op_type == OK and value is not None:
+                    if isinstance(value, list):
+                        # Overwrite on each successful read so that only the last
+                        # read snapshot is used for consistency checking.  Multiple
+                        # reads may occur during the read phase; we keep the final
+                        # one because it is the most up-to-date view of the data.
+                        final_read = set(value)
+                        read_count += 1
+
+    logger.info("Streamed %d lines from operations log", line_count)
 
     if read_count == 0:
         return CheckResult(
@@ -280,7 +267,7 @@ def check_consistency(operations_log: str) -> CheckResult:
     successful_adds = len(successful)
     failed_adds = len(failed)
 
-    write_availability = _compute_interval_availability(operations)
+    write_availability = _compute_interval_availability(write_invoke_times, ok_write_times)
 
     # Log time intervals where problematic writes were attempted.
     if value_to_invoke_ts:
