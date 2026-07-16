@@ -33,6 +33,7 @@ All ``tc`` commands are executed via ``docker exec`` through
 
 import logging
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -41,6 +42,26 @@ from faultstorm.cluster import ClusterManager
 from faultstorm.config import TestConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_error(e: Exception) -> str:
+    """Format an exception, including stderr/stdout if available.
+
+    For :class:`subprocess.CalledProcessError` the default ``str()``
+    representation contains the command and return code but omits
+    stderr/stdout.  This helper appends them so that ``tc`` diagnostic
+    output appears in WARNING-level log messages.
+    """
+    msg = str(e)
+    if isinstance(e, subprocess.CalledProcessError):
+        parts = [msg]
+        if e.stderr and e.stderr.strip():
+            parts.append(f"stderr: {e.stderr.strip()}")
+        if e.stdout and e.stdout.strip():
+            parts.append(f"stdout: {e.stdout.strip()}")
+        return "; ".join(parts)
+    return msg
+
 
 # Network interface inside containers.
 _IFACE = "eth0"
@@ -110,7 +131,7 @@ def _change_netem_delay(node: str, band: BandInfo, new_delay_ms: int) -> None:
             node,
             band.parent,
             new_delay_ms,
-            e,
+            _fmt_error(e),
         )
 
 
@@ -148,7 +169,7 @@ def _reset_netem_band(node: str, band: BandInfo, restore_delay_ms: int) -> None:
             "tc qdisc del on %s parent=%s failed: %s",
             node,
             band.parent,
-            e,
+            _fmt_error(e),
         )
 
     # Re-create with the desired delay
@@ -177,7 +198,7 @@ def _reset_netem_band(node: str, band: BandInfo, restore_delay_ms: int) -> None:
             node,
             band.parent,
             restore_delay_ms,
-            e,
+            _fmt_error(e),
         )
 
 
@@ -266,7 +287,7 @@ def _discover_bands_for_ips(
             timeout=10,
         )
     except Exception as e:
-        logger.warning("tc qdisc show on %s failed: %s", node, e)
+        logger.warning("tc qdisc show on %s failed: %s", node, _fmt_error(e))
         return {}
 
     bands = _parse_netem_bands(qdisc_out)
@@ -282,7 +303,7 @@ def _discover_bands_for_ips(
             timeout=10,
         )
     except Exception as e:
-        logger.warning("tc filter show on %s failed: %s", node, e)
+        logger.warning("tc filter show on %s failed: %s", node, _fmt_error(e))
         return {}
 
     ip_to_flowid = _parse_filter_ip_to_band(filter_out)
@@ -348,7 +369,7 @@ def _create_temp_netem_freeze(node: str, target_ips: Set[str]) -> bool:
             timeout=10,
         )
     except Exception as e:
-        logger.warning("temp freeze: tc prio on %s failed: %s", node, e)
+        logger.warning("temp freeze: tc prio on %s failed: %s", node, _fmt_error(e))
         return False
 
     try:
@@ -371,7 +392,7 @@ def _create_temp_netem_freeze(node: str, target_ips: Set[str]) -> bool:
             timeout=10,
         )
     except Exception as e:
-        logger.warning("temp freeze: tc netem on %s failed: %s", node, e)
+        logger.warning("temp freeze: tc netem on %s failed: %s", node, _fmt_error(e))
         # Clean up the root qdisc we just created
         _remove_temp_netem_freeze(node)
         return False
@@ -407,7 +428,7 @@ def _create_temp_netem_freeze(node: str, target_ips: Set[str]) -> bool:
                 "temp freeze: tc filter for %s on %s failed: %s",
                 ip,
                 node,
-                e,
+                _fmt_error(e),
             )
 
     logger.info(
@@ -431,7 +452,7 @@ def _remove_temp_netem_freeze(node: str) -> None:
         logger.warning(
             "temp freeze: tc cleanup on %s failed: %s",
             node,
-            e,
+            _fmt_error(e),
         )
 
 
@@ -784,7 +805,7 @@ class NetworkLatencyManager:
                 timeout=10,
             )
         except Exception as e:
-            logger.warning("tc prio on %s failed: %s", node, e)
+            logger.warning("tc prio on %s failed: %s", node, _fmt_error(e))
             return
 
         # Prepare band mapping for this node
@@ -820,7 +841,7 @@ class NetworkLatencyManager:
                     node,
                     band_idx,
                     delay_ms,
-                    e,
+                    _fmt_error(e),
                 )
                 continue
 
@@ -858,7 +879,7 @@ class NetworkLatencyManager:
                         "tc filter on %s ip=%s failed: %s",
                         node,
                         ip,
-                        e,
+                        _fmt_error(e),
                     )
                 ip_to_band[ip] = band_info
 
@@ -880,4 +901,4 @@ class NetworkLatencyManager:
                 timeout=10,
             )
         except Exception as e:
-            logger.warning("tc cleanup on %s failed: %s", node, e)
+            logger.warning("tc cleanup on %s failed: %s", node, _fmt_error(e))
