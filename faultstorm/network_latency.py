@@ -766,6 +766,11 @@ class NetworkLatencyManager:
         distinct delay value, attaches ``netem`` child qdiscs, and adds
         ``u32`` filters to classify traffic by destination IP.
 
+        If the root qdisc already exists (e.g. rules survived from a
+        previous manager instance), the existing band mapping is
+        recovered by parsing live ``tc`` output instead of creating
+        new rules.
+
         Also stores the band mapping in ``self._node_bands[node]`` so
         that bands can later be manipulated without re-parsing ``tc``
         output.
@@ -805,6 +810,20 @@ class NetworkLatencyManager:
                 timeout=10,
             )
         except Exception as e:
+            # The root qdisc may already exist (e.g. rules from a previous
+            # manager instance that were not cleaned up).  Recover the
+            # existing band mapping by parsing live tc output so the new
+            # manager has correct state for freeze/drop/restore operations.
+            existing = _discover_bands_for_ips(node, set(dest_delays.keys()))
+            if existing:
+                logger.info(
+                    "tc rules already present on %s, recovering %d band(s)",
+                    node,
+                    len(existing),
+                )
+                self._node_bands[node] = existing
+                return
+
             logger.warning("tc prio on %s failed: %s", node, _fmt_error(e))
             return
 
