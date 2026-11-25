@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import Callable, Dict, IO, List, Optional
+from typing import IO, Callable, Dict, List, Optional
 
 from faultstorm.checker import check_consistency
 from faultstorm.config import TestConfig
