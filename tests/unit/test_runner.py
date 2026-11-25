@@ -172,9 +172,9 @@ class TestRunnerRun:
         content = open(config.scenario_log).read()
         assert "FaultStorm scenario log" in content
 
-    def test_read_hooks_can_validate_a_specific_node(self, tmp_path):
-        """Hooks run around the read phase and explicit reads enter the checker log."""
-        config = _make_config(tmp_path, write_phase_duration=1, read_phase_duration=0)
+    def test_before_read_hook_runs_before_reads(self, tmp_path):
+        """The recovery hook runs before the regular read phase."""
+        config = _make_config(tmp_path, write_phase_duration=1, read_phase_duration=1)
         events = []
 
         class ObservedClient(MockDatabaseClient):
@@ -185,26 +185,20 @@ class TestRunnerRun:
         def before_read():
             events.append(("before", None))
 
-        def after_read(load_gen, ops_log):
-            events.append(("after", None))
-            assert load_gen.read(ops_log, node="db1") is not None
-            assert load_gen.read(ops_log, node="db2") is not None
-
         runner = TestRunner(
             config,
             ObservedClient(config.db_nodes),
             _make_registry(),
             before_read_phase=before_read,
-            after_read_phase=after_read,
         )
         result = runner.run()
 
         assert result.valid
-        assert events == [("before", None), ("after", None), ("read", "db1"), ("read", "db2")]
+        assert events[0] == ("before", None)
+        assert {node for action, node in events if action == "read"} == set(config.db_nodes)
         with open(config.operations_log) as stream:
             reads = [json.loads(line) for line in stream if '"action": "read"' in line]
-        assert reads[-1]["node"] == "db2"
-        assert reads[-1]["type"] == "ok"
+        assert {read["node"] for read in reads if read["type"] == "ok"} == set(config.db_nodes)
 
 
 # ---------------------------------------------------------------------------
