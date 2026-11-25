@@ -10,7 +10,7 @@ import json
 import logging
 import math
 from datetime import datetime, timezone
-from typing import List, Set
+from typing import Iterable, List, Optional, Set
 
 from faultstorm.model import CheckResult
 
@@ -161,22 +161,23 @@ def _log_problem_intervals(
         )
 
 
-def check_consistency(operations_log: str) -> CheckResult:
+def check_consistency(operations_log: str, expected_nodes: Optional[Iterable[str]] = None) -> CheckResult:
     """Check data consistency from an operations log.
 
     Streams the operations log line-by-line to avoid loading the entire
     file into memory — critical for long tests that produce hundreds of
     megabytes of JSON.
 
-    Analyzes write operations and final reads to detect:
-    - Lost values: confirmed written but missing from final read (DATA LOSS)
-    - Unexpected values: never attempted but found in final read (CORRUPTION)
+    Analyzes write operations and the last successful read from each node to detect:
+    - Lost values: confirmed written but missing from any final read (DATA LOSS)
+    - Unexpected values: never attempted but found in any final read (CORRUPTION)
     - Recovered values: indeterminate writes that actually went through
+    - Divergent final reads, including indeterminate writes present on only some nodes
 
     The semantics follow the standard set checker:
-    - lost = successful_adds - final_read
-    - unexpected = final_read - attempted
-    - recovered = (final_read ∩ attempted) - successful_adds
+    - lost = union(successful_adds - final_read[node])
+    - unexpected = union(final_read[node] - attempted)
+    - recovered = union((final_read[node] ∩ attempted) - successful_adds)
 
     Write availability is computed using time-interval bucketing: the time
     from the first write attempt to the last is divided into 0.1 s intervals,
@@ -185,6 +186,7 @@ def check_consistency(operations_log: str) -> CheckResult:
 
     Args:
         operations_log: Path to the operations log file
+        expected_nodes: Nodes that must each have a successful final read
 
     Returns:
         CheckResult with validation details
@@ -193,8 +195,7 @@ def check_consistency(operations_log: str) -> CheckResult:
     successful: Set[int] = set()  # Values confirmed written (OK)
     failed: Set[int] = set()  # Values confirmed NOT written (FAIL)
     # INFO values are in attempted but not in successful or failed
-    final_read: Set[int] = set()
-    read_count = 0
+    final_reads: dict[str, Set[int]] = {}
     value_to_invoke_ts: dict[int, float] = {}  # value → invoke timestamp
 
     # Collect timestamps for availability calculation during the same pass.
@@ -243,25 +244,32 @@ def check_consistency(operations_log: str) -> CheckResult:
             elif action == "read":
                 if op_type == OK and value is not None:
                     if isinstance(value, list):
-                        # Overwrite on each successful read so that only the last
-                        # read snapshot is used for consistency checking.  Multiple
-                        # reads may occur during the read phase; we keep the final
-                        # one because it is the most up-to-date view of the data.
-                        final_read = set(value)
-                        read_count += 1
+                        node = op.get("node")
+                        final_reads[str(node) if node is not None else "<unknown>"] = set(value)
 
     logger.info("Streamed %d lines from operations log", line_count)
 
-    if read_count == 0:
+    if not final_reads:
         return CheckResult(
             valid=False,
             errors="No successful reads found in operations log",
         )
 
-    # Compute results
-    lost = successful - final_read
-    unexpected = final_read - attempted
-    recovered = (final_read & attempted) - successful
+    missing_nodes = sorted(set(expected_nodes or ()) - final_reads.keys())
+    lost: Set[int] = set()
+    unexpected: Set[int] = set()
+    recovered: Set[int] = set()
+    for values in final_reads.values():
+        lost.update(successful - values)
+        unexpected.update(values - attempted)
+        recovered.update((values & attempted) - successful)
+    reference_node, reference = next(iter(final_reads.items()))
+    divergent_nodes = sorted(node for node, values in final_reads.items() if values != reference)
+    errors = []
+    if missing_nodes:
+        errors.append("No successful reads from: " + ", ".join(missing_nodes))
+    if divergent_nodes:
+        errors.append("Final reads differ between " + reference_node + " and: " + ", ".join(divergent_nodes))
 
     total_attempts = len(attempted)
     successful_adds = len(successful)
@@ -279,7 +287,7 @@ def check_consistency(operations_log: str) -> CheckResult:
             unexpected, value_to_invoke_ts, invoke_start, invoke_end, "Unexpected writes"
         )
 
-    valid = len(lost) == 0 and len(unexpected) == 0
+    valid = not lost and not unexpected and not errors
 
     result = CheckResult(
         valid=valid,
@@ -290,6 +298,7 @@ def check_consistency(operations_log: str) -> CheckResult:
         successful_adds=successful_adds,
         failed_adds=failed_adds,
         write_availability=write_availability,
+        errors="; ".join(errors) if errors else None,
     )
 
     if valid:
@@ -300,6 +309,6 @@ def check_consistency(operations_log: str) -> CheckResult:
             write_availability * 100,
         )
     else:
-        logger.error("Consistency check FAILED: %d lost, %d unexpected", len(lost), len(unexpected))
+        logger.error("Consistency check FAILED: %d lost, %d unexpected; %s", len(lost), len(unexpected), result.errors)
 
     return result

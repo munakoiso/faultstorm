@@ -143,7 +143,7 @@ class TestRunner:
 
         # Check results
         logger.info("Checking consistency...")
-        result = check_consistency(self.config.operations_log)
+        result = check_consistency(self.config.operations_log, self.config.db_nodes)
 
         return result
 

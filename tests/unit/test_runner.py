@@ -187,6 +187,7 @@ class TestRunnerRun:
 
         def after_read(load_gen, ops_log):
             events.append(("after", None))
+            assert load_gen.read(ops_log, node="db1") is not None
             assert load_gen.read(ops_log, node="db2") is not None
 
         runner = TestRunner(
@@ -199,7 +200,7 @@ class TestRunnerRun:
         result = runner.run()
 
         assert result.valid
-        assert events == [("before", None), ("after", None), ("read", "db2")]
+        assert events == [("before", None), ("after", None), ("read", "db1"), ("read", "db2")]
         with open(config.operations_log) as stream:
             reads = [json.loads(line) for line in stream if '"action": "read"' in line]
         assert reads[-1]["node"] == "db2"
