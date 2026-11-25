@@ -12,8 +12,8 @@ class CheckResult:
 
     Attributes:
         valid: Whether the test passed (no lost or unexpected values)
-        lost: Values confirmed written but missing from final read (DATA LOSS)
-        unexpected: Values never attempted but found in final read (CORRUPTION)
+        lost: Values confirmed written but missing from any node's final read (DATA LOSS)
+        unexpected: Values never attempted but found in any node's final read (CORRUPTION)
         recovered: Indeterminate writes that actually went through
         total_attempts: Total number of write attempts
         successful_adds: Number of confirmed successful writes
