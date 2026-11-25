@@ -27,6 +27,18 @@ def test_last_successful_read_per_node_detects_loss(tmp_path):
     assert "Final reads differ" in result.errors
 
 
+def test_earlier_replica_lag_does_not_fail_final_reads(tmp_path):
+    result = _check(tmp_path, [
+        {"type": "invoke", "action": "add", "value": 1},
+        {"type": "ok", "action": "add", "value": 1},
+        {"type": "ok", "action": "read", "node": "db1", "value": []},
+        {"type": "ok", "action": "read", "node": "db2", "value": [1]},
+        {"type": "ok", "action": "read", "node": "db1", "value": [1]},
+    ])
+
+    assert result.valid
+
+
 def test_indeterminate_write_on_only_one_node_is_divergence(tmp_path):
     result = _check(tmp_path, [
         {"type": "invoke", "action": "add", "value": 1},
