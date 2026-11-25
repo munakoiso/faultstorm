@@ -161,7 +161,9 @@ def _log_problem_intervals(
         )
 
 
-def check_consistency(operations_log: str, expected_nodes: Optional[Iterable[str]] = None) -> CheckResult:
+def check_consistency(
+    operations_log: str, expected_nodes: Optional[Iterable[str]] = None
+) -> CheckResult:
     """Check data consistency from an operations log.
 
     Streams the operations log line-by-line to avoid loading the entire
@@ -269,7 +271,9 @@ def check_consistency(operations_log: str, expected_nodes: Optional[Iterable[str
     if missing_nodes:
         errors.append("No successful reads from: " + ", ".join(missing_nodes))
     if divergent_nodes:
-        errors.append("Final reads differ between " + reference_node + " and: " + ", ".join(divergent_nodes))
+        errors.append(
+            "Final reads differ between " + reference_node + " and: " + ", ".join(divergent_nodes)
+        )
 
     total_attempts = len(attempted)
     successful_adds = len(successful)
@@ -309,6 +313,11 @@ def check_consistency(operations_log: str, expected_nodes: Optional[Iterable[str
             write_availability * 100,
         )
     else:
-        logger.error("Consistency check FAILED: %d lost, %d unexpected; %s", len(lost), len(unexpected), result.errors)
+        logger.error(
+            "Consistency check FAILED: %d lost, %d unexpected; %s",
+            len(lost),
+            len(unexpected),
+            result.errors,
+        )
 
     return result
