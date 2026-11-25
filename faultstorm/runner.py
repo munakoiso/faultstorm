@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Callable, Dict, IO, List, Optional
 
 from faultstorm.checker import check_consistency
 from faultstorm.config import TestConfig
@@ -36,6 +36,8 @@ class TestRunner:
         db_client: DatabaseClient,
         fault_registry: FaultRegistry,
         dc_map: Optional[Dict[str, List[str]]] = None,
+        before_read_phase: Optional[Callable[[], None]] = None,
+        after_read_phase: Optional[Callable[[LoadGenerator, IO[str]], None]] = None,
     ):
         """Initialize test runner.
 
@@ -45,11 +47,15 @@ class TestRunner:
             fault_registry: Registry of fault action classes
             dc_map: Datacenter mapping (DC name → list of node names).
                     Passed to fault engine; not serialized.
+            before_read_phase: Called after all faults are healed, before reads.
+            after_read_phase: Called after periodic reads, before checking consistency.
         """
         self.config = config
         self.db_client = db_client
         self.fault_registry = fault_registry
         self.dc_map = dc_map or {}
+        self.before_read_phase = before_read_phase
+        self.after_read_phase = after_read_phase
 
     def run(self) -> CheckResult:
         """Run a complete fault-injection test.
@@ -122,10 +128,16 @@ class TestRunner:
             logger.info("Phase 1 completed")
 
             # Phase 2: Read validation
+            if self.before_read_phase is not None:
+                self.before_read_phase()
             logger.info("Phase 2: Read validation started at %s", datetime.now().isoformat())
 
-            load_gen.run_read_phase(self.config.read_phase_duration, ops_log)
-            load_gen.stop()
+            try:
+                load_gen.run_read_phase(self.config.read_phase_duration, ops_log)
+                if self.after_read_phase is not None:
+                    self.after_read_phase(load_gen, ops_log)
+            finally:
+                load_gen.stop()
 
             logger.info("Phase 2 completed")
 

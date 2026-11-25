@@ -172,6 +172,39 @@ class TestRunnerRun:
         content = open(config.scenario_log).read()
         assert "FaultStorm scenario log" in content
 
+    def test_read_hooks_can_validate_a_specific_node(self, tmp_path):
+        """Hooks run around the read phase and explicit reads enter the checker log."""
+        config = _make_config(tmp_path, write_phase_duration=1, read_phase_duration=0)
+        events = []
+
+        class ObservedClient(MockDatabaseClient):
+            def read(self, node):
+                events.append(("read", node))
+                return super().read(node)
+
+        def before_read():
+            events.append(("before", None))
+
+        def after_read(load_gen, ops_log):
+            events.append(("after", None))
+            assert load_gen.read(ops_log, node="db2") is not None
+
+        runner = TestRunner(
+            config,
+            ObservedClient(config.db_nodes),
+            _make_registry(),
+            before_read_phase=before_read,
+            after_read_phase=after_read,
+        )
+        result = runner.run()
+
+        assert result.valid
+        assert events == [("before", None), ("after", None), ("read", "db2")]
+        with open(config.operations_log) as stream:
+            reads = [json.loads(line) for line in stream if '"action": "read"' in line]
+        assert reads[-1]["node"] == "db2"
+        assert reads[-1]["type"] == "ok"
+
 
 # ---------------------------------------------------------------------------
 # Tests: TestRunner.run_and_print()

@@ -228,7 +228,7 @@ class LoadGenerator:
                 self._log_event(log_file, INFO, "add", value=value, node=node, error=str(e))
             return False
 
-    def read(self, log_file: IO[str]) -> Optional[set[int]]:
+    def read(self, log_file: IO[str], node: Optional[str] = None) -> Optional[set[int]]:
         """Read all values from set table with application-side timeout.
 
         On timeout the daemon thread is abandoned but **not** killed.
@@ -239,11 +239,13 @@ class LoadGenerator:
 
         Args:
             log_file: Operations log file
+            node: Target node (if None, uses round-robin)
 
         Returns:
             Set of values if successful, None otherwise
         """
-        node = self._get_next_node()
+        if node is None:
+            node = self._get_next_node()
         self._log_event(log_file, INVOKE, "read", node=node)
         try:
             values: set[int] = self._run_with_timeout(
